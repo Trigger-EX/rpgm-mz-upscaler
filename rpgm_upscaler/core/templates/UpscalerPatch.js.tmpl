@@ -59,7 +59,7 @@ if (src(Game_CharacterBase, "refreshBushDepth")) {
 }
 
 // ---- tilemap texture limits (MZ renderer packs sheets into fixed-size textures) ---------------
-if (isMZ && CFG.texMult > 1 && typeof Tilemap !== "undefined") {
+if (isMZ && CFG.texMult > 1 && typeof Tilemap !== "undefined") { // MV: js/libs/pixi-tilemap.js is patched on disk
     let patched = 0;
     for (const holder of [Tilemap, Tilemap.Renderer, Tilemap.Layer]) {
         if (!holder) continue;
@@ -121,6 +121,34 @@ if (isMZ) {
     Sprite_Timer.prototype.createBitmap = function () { this.bitmap = new Bitmap(R(96), R(48)); this.bitmap.fontSize = R(32); };
 }
 
+// ---- hard-coded layout literals in core screens ----------------------------------------------
+if (/\b72\b/.test(src(Scene_Title, "drawGameTitle"))) {
+    Scene_Title.prototype.drawGameTitle = function () {
+        const x = R(20), y = Graphics.height / 4, maxWidth = Graphics.width - x * 2;
+        const bmp = this._gameTitleSprite.bitmap;
+        bmp.outlineColor = "black"; bmp.outlineWidth = R(8); bmp.fontSize = R(72);
+        bmp.drawText($dataSystem.gameTitle, x, y, maxWidth, R(48), "center");
+    };
+}
+if (!isMZ && /180/.test(src(Window_Base, "drawActorSimpleStatus")) && /200/.test(src(Window_Base, "drawActorSimpleStatus"))) {
+    Window_Base.prototype.drawActorSimpleStatus = function (actor, x, y, width) {
+        const lh = this.lineHeight(), x2 = x + R(180), width2 = Math.min(R(200), width - R(180) - this.textPadding());
+        this.drawActorName(actor, x, y);
+        this.drawActorLevel(actor, x, y + lh * 1);
+        this.drawActorIcons(actor, x, y + lh * 2);
+        this.drawActorClass(actor, x2, y);
+        this.drawActorHp(actor, x2, y + lh * 1, width2);
+        this.drawActorMp(actor, x2, y + lh * 2, width2);
+    };
+}
+if (!isMZ) {
+    for (const [name, def] of [["drawActorHp", 186], ["drawActorMp", 186], ["drawActorTp", 96]]) {
+        if (!src(Window_Base, name)) continue;
+        const o = Window_Base.prototype[name];
+        Window_Base.prototype[name] = function (actor, x, y, width) { return o.call(this, actor, x, y, width || R(def)); };
+    }
+}
+
 // ---- sprite sheets with literal cell sizes ---------------------------------------------------
 if (/\b48\b/.test(src(Sprite_Balloon, "updateFrame"))) {
     Sprite_Balloon.prototype.updateFrame = function () {
@@ -158,6 +186,20 @@ if (isMZ && src(Sprite_Animation, "updateEffectGeometry")) {
         if (this._handle && this._animation && typeof this._handle.setScale === "function") {
             const s = (this._animation.scale / 100) * N;
             this._handle.setScale(s, s, s);
+        }
+    };
+}
+
+// Pictures must live in plain screen space: some engine versions give the container a pivot equal to
+// its frame offset (MV) or a positional offset (MZ), which would shift pictures by the UI centering.
+if (typeof Spriteset_Base !== "undefined" && src(Spriteset_Base, "createPictures")) {
+    const o = Spriteset_Base.prototype.createPictures;
+    Spriteset_Base.prototype.createPictures = function () {
+        o.apply(this, arguments);
+        const c = this._pictureContainer;
+        if (c) {
+            if (typeof c.setFrame === "function") c.setFrame(0, 0, Graphics.width, Graphics.height);
+            c.x = 0; c.y = 0;
         }
     };
 }

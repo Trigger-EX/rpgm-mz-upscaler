@@ -28,11 +28,18 @@ def format_plugins_js(prefix: str, entries: list[dict]) -> str:
 
 
 def tex_multiplier(n: float) -> int:
-    need = math.ceil(768 * n / 1024 - 1e-9)
-    k = 1
-    while k < need:
-        k *= 2
-    return k
+    """Factor by which the tilemap renderer's 1024px sheet slots / 2048px textures must grow.
+    The largest default tileset sheet side is 768px."""
+    return max(1, math.ceil(768 * n / 1024 - 1e-9))
+
+
+_TILEMAP_NUM = re.compile(r"(?<![\w.])(1024|2048)(?![\w.])")
+
+
+def patch_tilemap_lib(source: str, k: int) -> tuple[str, int]:
+    """MV's js/libs/pixi-tilemap.js packs every tileset sheet into a fixed 1024px slot of 2048px textures.
+    Grow both by k. Always applied to the ORIGINAL text, so repeated runs never compound."""
+    return _TILEMAP_NUM.subn(lambda m: str(int(m.group(1)) * k), source)
 
 
 def render_plugin(plan: Plan, engine: str) -> str:
@@ -55,9 +62,11 @@ def apply_patches(plan: Plan, out: Path) -> list[str]:
     web = out / project.web if project.web else out
     done: list[str] = []
 
+    # Patched files are always derived from the ORIGINAL (source) file, so resumed runs never compound.
+    src_web = project.web_root
     sysfile = web / "data" / "System.json"
     if sysfile.is_file():
-        system = json.loads(sysfile.read_text(encoding="utf-8-sig"))
+        system = json.loads((src_web / "data" / "System.json").read_text(encoding="utf-8-sig"))
         changed = False
         if project.engine == "MZ":
             adv = system.setdefault("advanced", {})
@@ -85,6 +94,14 @@ def apply_patches(plan: Plan, out: Path) -> list[str]:
             win["width"], win["height"] = sp.target
             _write_json(pkg_out, data, compact=False)
             done.append(pkg_out.relative_to(out).as_posix())
+
+    lib = web / "js" / "libs" / "pixi-tilemap.js"
+    k = tex_multiplier(sp.n)
+    if k > 1 and lib.is_file():
+        text, count = patch_tilemap_lib((src_web / "js" / "libs" / "pixi-tilemap.js").read_text(encoding="utf-8"), k)
+        if count:
+            lib.write_text(text, encoding="utf-8")
+            done.append(lib.relative_to(out).as_posix())
 
     plugin = web / "js" / "plugins" / f"{PLUGIN_NAME}.js"
     plugin.parent.mkdir(parents=True, exist_ok=True)

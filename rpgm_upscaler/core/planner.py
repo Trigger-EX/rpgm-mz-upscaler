@@ -71,6 +71,12 @@ def make_scale_plan(project: Project, opts: Options) -> scaling.ScalePlan:
     sp = scaling.ScalePlan(n=n, orig=project.screen, ui_orig=project.ui_area, target=tuple(opts.target),
                            tile_orig=project.tile_size, ui_fill=opts.ui_fill, anchor=opts.anchor)
     sp.warnings = sp.check()
+    from .patcher import tex_multiplier
+    k = tex_multiplier(n)
+    if k > 2:
+        side = 2048 * k
+        sp.warnings.append(f"Tilesets at x{n:g} need {side}x{side} map textures (about {side * side * 4 * 4 // 2**20} MB of GPU "
+                           "memory); lower the scale if the map fails to render.")
     return sp
 
 

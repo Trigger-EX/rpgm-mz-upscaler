@@ -61,11 +61,11 @@ def _detect_engine(web: Path) -> tuple[str, str]:
     js = web / "js"
     if (js / "rmmz_core.js").is_file():
         text = (js / "rmmz_core.js").read_text(encoding="utf-8", errors="replace")
-        m = re.search(r'RPGMAKER_VERSION\s*=\s*"([^"]+)"', text)
+        m = re.search(r'''RPGMAKER_VERSION\s*=\s*["']([^"']+)["']''', text)
         return "MZ", m.group(1) if m else ""
     if (js / "rpg_core.js").is_file():
         text = (js / "rpg_core.js").read_text(encoding="utf-8", errors="replace")
-        m = re.search(r'RPGMAKER_VERSION\s*=\s*"([^"]+)"', text)
+        m = re.search(r'''RPGMAKER_VERSION\s*=\s*["']([^"']+)["']''', text)
         return "MV", m.group(1) if m else ""
     raise ProjectError("Neither js/rmmz_core.js nor js/rpg_core.js found.")
 

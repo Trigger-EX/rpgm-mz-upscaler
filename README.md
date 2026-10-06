@@ -31,19 +31,34 @@ Runs can be cancelled and resumed.
   sizes, window metrics, fonts, balloon/state/weapon/animation cells, character shifts, picture/enemy/zoom coordinates
   and raises tilemap texture limits. Everything in the plugin is feature-detected and logs to the console as `[UpscalerPatch]`.
 
+## What has been verified
+
+* **RPG Maker MV (engine v1.3b from the MIT-licensed [rpgtkoolmv/corescript](https://github.com/rpgtkoolmv/corescript))**:
+  a generated sample game is upscaled, then both the original and the result are booted in headless Chromium and
+  compared (title, map with tilesets and characters, message with face, picture, animation, balloon, menu, battle).
+  Plain and encrypted images, and scales x1.625 and x2 pass. See `tools/run_e2e.sh` and `tests/test_e2e_browser.py`.
+* **RPG Maker MZ: not tested against the real engine** (its scripts are not public). Only the data patches
+  (`System.json`, `package.json`, `plugins.js`) and a stubbed run of the plugin are tested; MZ method names and the MZ tilemap
+  texture fix come from memory and are feature-detected at runtime (console warnings `[UpscalerPatch]`).
+
 ## Limitations (read this)
 
-* The engine patch is **best effort and was only tested against stubs**, not a real MV/MZ install: check the title
-  screen, a map with autotiles, the menu, a message with a face, a battle and a movie. Method names are matched
-  against the engine's own source at runtime; anything missing is skipped with a console warning.
-* Third-party plugins with hard-coded pixel values are not changed. Unknown `img/<folder>`s are scaled by N and flagged.
+* Only core-engine layouts are patched. Third-party plugins and any literal pixel values elsewhere in the engine are not
+  changed; the planner flags unknown `img/<folder>`s. Expect to touch up odd screens (shops, equip, save list, custom HUDs).
+* Tilesets need big map textures: the patch grows pixi-tilemap's 2048px textures by ceil(768*N/1024). That is fine up to
+  about x2.7 (4096px textures); beyond it the GPU memory use rises quickly (the planner warns).
 * Packaged games (`.nw`, exe with archive) must be extracted first. Encrypted audio is copied unchanged.
-* Scaling is by one factor, so a 4:3 game at 1920x1080 keeps its aspect and shows more map, not stretched UI.
+* One factor N for everything, so a 4:3 game at 1920x1080 keeps its aspect and shows more map rather than stretching the UI.
 
 ## Development
 
 ```
 .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
 .venv/bin/python -m pytest          # GUI test needs QT_QPA_PLATFORM=offscreen and system libEGL/libGL
+
+# end-to-end in a real engine (needs node, playwright, Chromium; any .ttf for the engine's game font)
+git clone --depth 1 https://github.com/rpgtkoolmv/corescript ~/corescript
+tools/run_e2e.sh ~/corescript /tmp/e2e /path/to/font.ttf [--scale 2]     # ENCRYPT=1 for encrypted images
 ```
+`tools/make_sample_game.py` builds the sample game (engine files are never stored in this repo).
 Architecture and rationale: `docs/plan.md`.

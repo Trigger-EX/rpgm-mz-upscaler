@@ -46,6 +46,10 @@ def make_game(root: Path, engine="MZ", screen=(816, 624), encrypted=False, www=F
                                "mainFontFilename": "x.ttf"}}
     else:
         (web / "js/rpg_core.js").write_text('Utils.RPGMAKER_NAME = "MV"; Utils.RPGMAKER_VERSION = "1.6.2";')
+        (web / "js/libs").mkdir(parents=True, exist_ok=True)
+        (web / "js/libs/pixi-tilemap.js").write_text(
+            "var shiftU = 1024 * (points[i + 8] & 1);\nvar rt = PIXI.RenderTexture.create(2048, 2048);\n"
+            "samplerSize.push(1.0 / 2048);\nvar label = 'x1024y'; var v = 1.1024;\n")
         (web / "js/rpg_managers.js").write_text(
             f"SceneManager._screenWidth  = {screen[0]};\nSceneManager._screenHeight = {screen[1]};\n")
         system = {"hasEncryptedImages": encrypted, "hasEncryptedAudio": False, "encryptionKey": KEY.hex()}

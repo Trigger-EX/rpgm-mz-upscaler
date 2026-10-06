@@ -271,3 +271,41 @@ def test_cli(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["scale"] == 1.625
     assert cli_main(["run", str(g), "-o", str(tmp_path / "o"), "--no-movies", "--workers", "1"]) == 0
     assert cli_main(["run", str(g), "-o", str(g / "o")]) == 2
+
+
+# ---- tilemap texture limits / idempotent patching ------------------------------------------------
+def test_tex_multiplier_and_lib_patch():
+    assert patcher.tex_multiplier(1.0) == 1 and patcher.tex_multiplier(1.5) == 2
+    assert patcher.tex_multiplier(1.625) == 2 and patcher.tex_multiplier(2.75) == 3
+    src = "a = 1024 * (p & 1); RenderTexture.create(2048, 2048); s = 1.0 / 2048; n = 'x1024y'; f = 1.1024;"
+    out, n = patcher.patch_tilemap_lib(src, 2)
+    assert n == 4 and "2048 * (p & 1)" in out and "create(4096, 4096)" in out and "1.0 / 4096" in out
+    assert "'x1024y'" in out and "1.1024" in out          # unrelated lookalikes untouched
+    assert patcher.patch_tilemap_lib(src, 2)[0] == out    # derived from the original: deterministic
+
+
+def test_mv_tilemap_lib_patched_and_resume_does_not_compound(tmp_path):
+    g = make_game(tmp_path / "g", "MV")
+    out = tmp_path / "out"
+    for _ in range(3):                                    # resumed runs must keep the patch stable
+        _, res = _run(g, out)
+        assert res.success, res.failed
+    lib = (out / "js/libs/pixi-tilemap.js").read_text()
+    assert "2048 * (points[i + 8] & 1)" in lib and "create(4096, 4096)" in lib and "8192" not in lib
+    assert "1024" in (g / "js/libs/pixi-tilemap.js").read_text()   # source untouched
+
+
+def test_mz_system_json_not_compounded_on_resume(tmp_path):
+    g = make_game(tmp_path / "g", "MZ")
+    out = tmp_path / "out"
+    for _ in range(3):
+        _run(g, out)
+    s = json.loads((out / "data/System.json").read_text())
+    assert s["advanced"]["fontSize"] == 42 and s["tileSize"] == 78
+
+
+def test_large_scale_warns_about_gpu_memory(tmp_path):
+    g = make_game(tmp_path / "g", "MZ")
+    plan = build_plan(load_project(g), Options(movies=False, scale="3"))
+    assert any("map textures" in w for w in plan.warnings)
+    assert not any("map textures" in w for w in build_plan(load_project(g), Options(movies=False)).warnings)
