@@ -1,0 +1,63 @@
+"""User options (picklable dataclass) and persisted app settings."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+
+@dataclass
+class Options:
+    target: tuple[int, int] = (1920, 1080)
+    scale: str = "fit"                 # "fit" or a number
+    engine: str = "lanczos"            # lanczos|nearest|sharp|realesrgan|waifu2x
+    engine_path: str = ""
+    model: str = ""
+    resamplers: dict[str, str] = field(default_factory=dict)   # category -> resampler
+    skip: list[str] = field(default_factory=list)              # categories to copy unchanged
+    movies: bool = True
+    patch: bool = True
+    reencrypt: bool = True             # keep encrypted images encrypted
+    scale_windowskin: bool = False
+    ui_fill: bool = False
+    anchor: str = "center"
+    workers: int = 0
+    resume: bool = True
+
+    def digest(self, n: float) -> str:
+        d = asdict(self)
+        for k in ("workers", "resume", "patch"):
+            d.pop(k)
+        d["n"] = n
+        return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:12]
+
+    @staticmethod
+    def from_dict(d: dict) -> "Options":
+        o = Options()
+        for k, v in d.items():
+            if hasattr(o, k):
+                setattr(o, k, tuple(v) if k == "target" else v)
+        return o
+
+
+def settings_path() -> Path:
+    base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "rpgm-upscaler" / "settings.json"
+
+
+def load_settings() -> dict:
+    try:
+        return json.loads(settings_path().read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(data: dict) -> None:
+    p = settings_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data, indent=2))
+    except OSError:
+        pass
