@@ -137,6 +137,12 @@ def make_argos_zip(path: Path, top="translate-ja_en-1_1", skip=None) -> Path:
     return path
 
 
+def test_find_installed_plain_top_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    dest = argos.import_package(make_argos_zip(tmp_path / "p.argosmodel", top="ja_en"))   # what argos-net.com really ships
+    assert argos.find_installed() == dest
+
+
 def test_package_validation(tmp_path):
     good = make_argos_zip(tmp_path / "g.argosmodel")
     assert argos.validate_zip(good) == "translate-ja_en-1_1"

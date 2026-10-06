@@ -36,7 +36,7 @@ def find_installed(src: str = "ja", dst: str = "en") -> Path | None:
     for root in roots:
         if not root.is_dir():
             continue
-        for p in sorted(root.glob(f"translate-{src}_{dst}*")):
+        for p in sorted([*root.glob(f"translate-{src}_{dst}*"), *root.glob(f"{src}_{dst}*")]):   # the real package unpacks as plain "ja_en"
             if p.is_dir() and _is_model_dir(p):
                 best = p
     return best
