@@ -249,4 +249,4 @@ def test_cli_translate_and_dump(tmp_path, monkeypatch, capsys):
     d = json.loads(capsys.readouterr().out)
     assert d["english"]["ボス撃破"] == "Boss Defeated" and d["english"]["ポーション"] == "Potion" and d["english"]["アレックス"] == "Arekkusu"
     assert main(["saves", "dump", str(sv), "--translate"]) == 0
-    assert "ボス撃破 [Boss Defeated]" in capsys.readouterr().out
+    assert "ドア開放 [Door Open]" in capsys.readouterr().out
