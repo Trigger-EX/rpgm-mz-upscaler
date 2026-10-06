@@ -148,8 +148,11 @@ def build_data(web: Path, encrypted: bool) -> None:
                            description="", effects=[], hitType=1, iconIndex=76, message1="", message2="", mpCost=0,
                            name="Attack", note="", occasion=1, repeats=1, requiredWtypeId1=0, requiredWtypeId2=0,
                            scope=1, speed=0, stypeId=0, successRate=100, tpCost=0, tpGain=10)])
-    for n in ("Items", "Weapons", "Armors", "CommonEvents"):
+    for n in ("Weapons", "Armors", "CommonEvents"):
         put(n, [None])
+    put("Items", [None] + [d(id=i, animationId=0, consumable=True, damage=d(critical=False, elementId=0, formula="0", type=0, variance=20),
+                             description="", effects=[], hitType=0, iconIndex=176 + i, itypeId=1, name=f"Potion {i}", note="",
+                             occasion=0, price=10, repeats=1, scope=7, speed=0, successRate=100, tpGain=0) for i in (1, 2, 3)])
     put("Enemies", [None, d(id=1, actions=[d(conditionParam1=0, conditionParam2=0, conditionType=0, rating=5, skillId=1)],
                             battlerHue=0, battlerName="Slime", dropItems=[d(dataId=1, denominator=1, kind=0)] * 3,
                             exp=1, traits=[d(code=22, dataId=0, value=1), d(code=31, dataId=1, value=0), d(code=23, dataId=0, value=1)],
@@ -201,7 +204,7 @@ def build_data(web: Path, encrypted: bool) -> None:
         locale="en_US", magicSkills=[1], menuCommands=[True] * 6, optDisplayTp=True, optDrawTitle=True, optExtraExp=False,
         optFloorDeath=False, optFollowers=True, optSlipDeath=False, optTransparent=False, partyMembers=[1],
         ship=d(bgm=BGM, characterIndex=0, characterName="", startMapId=0, startX=0, startY=0),
-        skillTypes=["", "Magic"], sounds=[SE] * 24, startMapId=1, startX=12, startY=9, switches=["", "S1"],
+        skillTypes=["", "Magic"], sounds=[SE] * 24, startMapId=1, startX=12, startY=9, switches=["", "S1", "S2", "S3", "S4", "S5"],
         terms=d(basic=basic, commands=["Fight", "Escape", "Attack", "Guard", "Item", "Skill", "Equip", "Status",
                                        "Formation", "Save", "Game End", "Options", "Weapon", "Armor", "Key Item",
                                        "Equip", "Optimize", "Clear", "New Game", "Continue", None, "To Title", "Cancel",
@@ -225,7 +228,7 @@ def build_data(web: Path, encrypted: bool) -> None:
                            magicReflection="%1 reflected the magic!", counterAttack="%1 counterattacked!",
                            substitute="%1 protected %2!", buffAdd="%1's %2 went up!", debuffAdd="%1's %2 went down!",
                            buffRemove="%1's %2 returned to normal!", actionFailure="There was no effect on %1!")),
-        testBattlers=[], testTroopId=1, title1Name="Title", title2Name="", titleBgm=BGM, variables=["", "V1"], versionId=1,
+        testBattlers=[], testTroopId=1, title1Name="Title", title2Name="", titleBgm=BGM, variables=["", "V1", "V2", "V3"], versionId=1,
         victoryMe=BGM, weaponTypes=["", "Dagger"], windowTone=[0, 0, 0, 0],
         hasEncryptedImages=encrypted, hasEncryptedAudio=False, **({"encryptionKey": KEY.hex()} if encrypted else {})))
 
