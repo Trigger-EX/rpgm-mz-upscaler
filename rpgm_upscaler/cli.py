@@ -65,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     s_dump.add_argument("save")
     s_dump.add_argument("--json", action="store_true")
     s_dump.add_argument("--names", action="store_true", help="show database names (switches, variables, items ...)")
+    s_dump.add_argument("--translate", action="store_true", help="also translate Japanese names to English (offline)")
     s_set = ssub.add_parser("set", help="edit a save in place (a .bak backup is always made)")
     s_set.add_argument("save")
     s_set.add_argument("--switch", action="append", default=[], metavar="ID=on|off")
@@ -74,8 +75,12 @@ def main(argv: list[str] | None = None) -> int:
     s_set.add_argument("--actor", action="append", default=[], metavar="ID:level|exp|hp|mp|name=VALUE")
     s_set.add_argument("--map", type=int)
     s_set.add_argument("--pos", metavar="X,Y")
+    a_tr = sub.add_parser("translate", help="offline Japanese -> English: TEXT... | --file F | install | import PATH | status")
+    a_tr.add_argument("items", nargs="*")
+    a_tr.add_argument("--file", help="translate each line of a UTF-8 text file")
+    a_tr.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
-    if args.cmd in ("detect", "saves"):
+    if args.cmd in ("detect", "saves", "translate"):
         from .hubcli import run_hub_command
         return run_hub_command(args)
     try:

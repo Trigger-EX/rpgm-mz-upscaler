@@ -12,16 +12,19 @@ dependencies = ["Pillow>=10", "numpy>=1.26"]
 
 [project.optional-dependencies]
 gui = ["PySide6-Essentials>=6.6"]
+translate = ["ctranslate2>=4,<5", "sentencepiece>=0.2,<0.3"]
 
 [project.scripts]
 rpgm-upscaler = "rpgm_upscaler.__main__:main"
 rpgm-upscaler-cli = "rpgm_upscaler.cli:main"
+rpgm-hub = "rpgm_upscaler.__main__:main"
+rpgm-hub-cli = "rpgm_upscaler.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["rpgm_upscaler*"]
 
 [tool.setuptools.package-data]
-rpgm_upscaler = ["core/templates/*"]
+rpgm_upscaler = ["core/templates/*", "translate/data/*", "rgss/templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -10,6 +10,23 @@ from .saves.files import find_saves, open_save
 from .saves.model import INVENTORY_KINDS, SaveError
 
 
+def _add_english(d: dict) -> None:
+    """Translate every Japanese label in a dump (offline) and store it under d["english"]."""
+    from .translate.service import Translator
+    labels = set()
+    for key in ("switch_names", "variable_names"):
+        labels.update(d.get(key, {}).values())
+    for a in d["party"]:
+        labels.add(a.get("db_name", ""))
+    for kind in d["inventory"].values():
+        labels.update(v.get("name", "") for v in kind.values())
+    if d.get("position"):
+        labels.add(d["position"].get("map_name", ""))
+    labels = sorted(x for x in labels if x)
+    t = Translator()
+    d["english"] = {r_src: r.text for r_src, r in zip(labels, t.translate_many(labels)) if r.translated}
+
+
 def _neutral(doc, names=None) -> dict:
     def label(kind, i):
         return strip_codes(names.inventory(kind).get(i, "")) if names else ""
@@ -46,7 +63,9 @@ def _print_dump(d: dict) -> None:
     for kind, items in d["inventory"].items():
         for i, v in items.items():
             print(f"  {kind[:-1]:<7} {i:>3} x{v['count']:<3} {v.get('name', '')}")
-    sn, vn = d.get("switch_names", {}), d.get("variable_names", {})
+    en = d.get("english", {})
+    sn = {k: (f"{v} [{en[v]}]" if v in en else v) for k, v in d.get("switch_names", {}).items()}
+    vn = {k: (f"{v} [{en[v]}]" if v in en else v) for k, v in d.get("variable_names", {}).items()}
     on = [f"{i}{(':' + sn[i]) if i in sn else ''}" for i, v in d["switches"].items() if v]
     print("switches ON:", ", ".join(on) or "-")
     for i, v in d["variables"].items():
@@ -70,8 +89,49 @@ def _value(text: str):
     return text
 
 
+def _translate_cmd(args) -> int:
+    from .translate import argos
+    from .translate.service import Translator
+    items = list(args.items)
+    if items and items[0] == "status":
+        st = Translator().status()
+        print(json.dumps(st, ensure_ascii=False, indent=2))
+        return 0
+    if items and items[0] == "install":
+        last = [0]
+
+        def prog(done, total):
+            if total and done * 100 // total >= last[0] + 5:
+                last[0] = done * 100 // total
+                print(f"\rdownloading {last[0]}%", end="", file=sys.stderr)
+        print("model installed at", argos.install(progress=prog))
+        return 0
+    if items and items[0] == "import":
+        if len(items) < 2:
+            print("usage: translate import PATH.argosmodel", file=sys.stderr)
+            return 2
+        print("model installed at", argos.import_package(items[1]))
+        return 0
+    texts = list(items)
+    if args.file:
+        texts += [ln.rstrip("\n") for ln in open(args.file, encoding="utf-8") if ln.strip()]
+    if not texts:
+        print("nothing to translate (give TEXT..., --file, or install|import|status)", file=sys.stderr)
+        return 2
+    res = Translator().translate_many(texts)
+    if args.json:
+        print(json.dumps([{"ja": t, "en": r.text, "source": r.source, "confidence": r.confidence} for t, r in zip(texts, res)],
+                         ensure_ascii=False, indent=2))
+    else:
+        for t, r in zip(texts, res):
+            print(f"{t}\t{r.text}\t[{r.source}]")
+    return 0
+
+
 def run_hub_command(args) -> int:
     try:
+        if args.cmd == "translate":
+            return _translate_cmd(args)
         if args.cmd == "detect":
             info = detect_engine(args.path)
             if info is None:
@@ -90,7 +150,9 @@ def run_hub_command(args) -> int:
             return 0 if files else 1
         doc = open_save(args.save)
         if args.saves_cmd == "dump":
-            d = _neutral(doc, load_names(args.save) if args.names else None)
+            d = _neutral(doc, load_names(args.save) if (args.names or args.translate) else None)
+            if args.translate:
+                _add_english(d)
             print(json.dumps(d, ensure_ascii=False, indent=2) if args.json else "", end="" if args.json else "")
             if args.json:
                 print()
@@ -121,6 +183,11 @@ def run_hub_command(args) -> int:
         doc.save()
         print(f"saved {doc.path} (backup kept)")
         return 0
-    except (SaveError, ValueError) as e:
+    except (SaveError, ValueError, argos_error()) as e:
         print("error:", e, file=sys.stderr)
         return 2
+
+
+def argos_error():
+    from .translate.argos import ArgosError
+    return ArgosError
