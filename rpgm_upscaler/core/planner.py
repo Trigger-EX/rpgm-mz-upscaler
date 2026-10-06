@@ -28,6 +28,7 @@ class Job:
     encrypted: bool = False
     out_encrypted: bool = False
     passthrough: bool = False      # decrypt only, no resize (plain-image mode)
+    keep_source: bool = False      # the original stays in the output as well (RGSS Hires packs)
     cost: int = 1                  # pixels, for ETA
 
     @property
@@ -44,6 +45,8 @@ class Plan:
     copies: int = 0
     warnings: list[str] = field(default_factory=list)
     skipped_windowskins: list[str] = field(default_factory=list)
+    mode: str = ""                 # RGSS: hires | stock640
+    patch_hook: object = None      # callable(plan, out) -> list[str]; replaces the MV/MZ engine patcher
 
     def summary(self) -> dict[str, int]:
         out: dict[str, int] = {}

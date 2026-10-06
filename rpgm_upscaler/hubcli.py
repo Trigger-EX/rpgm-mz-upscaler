@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 from .detect import detect_engine
 from .saves.database import load_names, strip_codes
@@ -128,8 +129,104 @@ def _translate_cmd(args) -> int:
     return 0
 
 
+def run_rgss_command(args, info, opts) -> int:
+    """analyze | plan | run for VX / VX Ace games."""
+    from .rgss import pipeline
+    from .rgss.planner import build_plan
+    from .rgss.project import RgssProjectError
+    if info.engine == "XP":
+        print("RPG Maker XP games are detected but not supported yet.", file=sys.stderr)
+        return 2
+    try:
+        if args.cmd == "analyze":
+            print(f"engine: {info.label}\nfolder: {info.root}\narchive: {info.archive.name if info.archive else 'none (loose files)'}")
+            prep = pipeline.prepare(args.game)
+            try:
+                p = prep.project
+                print(f"screen: {p.screen[0]}x{p.screen[1]}\ntile size: {p.tile_size}\ntitle: {p.title}\nscripts: {p.scripts_path}")
+            finally:
+                prep.cleanup()
+            return 0
+        prep = pipeline.prepare(args.game)
+        try:
+            if args.cmd == "plan":
+                plan = build_plan(prep.project, opts, args.mode)
+                if args.json:
+                    print(json.dumps({"scale": plan.scale.n, "mode": plan.mode, "summary": plan.summary(), "copies": plan.copies,
+                                      "warnings": plan.warnings, "jobs": len(plan.jobs)}))
+                else:
+                    print(f"{info.label}: scale x{plan.scale.n:g}, mode {plan.mode}")
+                    for k, v in sorted(plan.summary().items()):
+                        print(f"  {k:16s} {v}")
+                    print(f"  copied as-is     {plan.copies}")
+                    for w in plan.warnings:
+                        print("warning:", w)
+                return 0
+            from .core.runner import Runner
+            plan = build_plan(prep.project, opts, args.mode)
+            res = Runner(plan, args.output,
+                         on_progress=lambda d, t, n: print(f"\r{d}/{t} {n[:60]:60s}", end="", file=sys.stderr),
+                         on_log=lambda lvl, msg: lvl in ("error", "warning") and print(f"\n{lvl}: {msg}", file=sys.stderr)).run()
+            print(f"\nupscaled {res.ok}, resumed {res.skipped}, failed {len(res.failed)}; wrote {', '.join(res.patched) or 'no extra files'}")
+            return 0 if res.success else 1
+        finally:
+            prep.cleanup()
+    except (RgssProjectError, OSError, ValueError) as e:
+        print("error:", e, file=sys.stderr)
+        return 2
+
+
+def _unpack_scripts(args) -> int:
+    from .rgss import scripts as sc
+    from .rgss.archive import ArchiveError, open_archive
+    info = detect_engine(args.game)
+    if info is None or info.engine not in ("ACE", "VX", "XP"):
+        print("not an RGSS (XP / VX / VX Ace) project", file=sys.stderr)
+        return 2
+    try:
+        if args.cmd == "unpack":
+            if info.archive is None:
+                print("this game has no encrypted archive", file=sys.stderr)
+                return 1
+            dest = Path(args.output) if args.output else info.root / (info.archive.stem + "_extracted")
+            files = open_archive(info.archive).extract_all(dest, lambda d, t, n: print(f"\r{d}/{t} {n[-50:]:50s}", end="", file=sys.stderr))
+            print(f"\nextracted {len(files)} files to {dest}")
+            return 0
+        from .rgss.project import load_rgss_project
+        base = None
+        tmp = None
+        if info.archive is not None and not (info.root / "Data").is_dir():
+            import tempfile
+            tmp = Path(tempfile.mkdtemp(prefix="rpgmhub_"))
+            open_archive(info.archive).extract_all(tmp)
+            base = tmp
+        try:
+            proj = load_rgss_project(args.game, base=base, info=info)
+            f = proj.base / proj.scripts_path.replace("\\", "/")
+            arr = sc.load(f.read_bytes())
+            for e in sc.listing(arr):
+                print(f"{e.index:>3}  {e.id:>8}  {e.size:>7} B  {e.title}")
+            if args.extract:
+                dest = Path(args.extract)
+                dest.mkdir(parents=True, exist_ok=True)
+                for i, entry in enumerate(arr):
+                    safe = "".join(c if c.isalnum() or c in "-_ ." else "_" for c in sc._title(entry)).strip() or "script"
+                    (dest / f"{i:03d}_{safe}.rb").write_text(sc.source(entry), encoding="utf-8")
+                print(f"extracted {len(arr)} scripts to {dest}")
+        finally:
+            if tmp:
+                import shutil
+                shutil.rmtree(tmp, ignore_errors=True)
+        return 0
+    except (ArchiveError, sc.ScriptsError, OSError, KeyError) as e:
+        print("error:", e, file=sys.stderr)
+        return 2
+
+
 def run_hub_command(args) -> int:
     try:
+        if args.cmd in ("unpack", "scripts"):
+            return _unpack_scripts(args)
         if args.cmd == "translate":
             return _translate_cmd(args)
         if args.cmd == "detect":

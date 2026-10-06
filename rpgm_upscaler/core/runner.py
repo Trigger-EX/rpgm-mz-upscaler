@@ -116,7 +116,7 @@ class Runner:
         manifest = self._load_manifest() if opts.resume else {}
         manifest = {k: v for k, v in manifest.items() if v.get("opts") == digest}
 
-        job_srcs = {j.src for j in plan.jobs}
+        job_srcs = {j.src for j in plan.jobs if not j.keep_source}
         copies = [f for f in base.rglob("*") if f.is_file() and f.relative_to(base).as_posix() not in job_srcs]
         total = len(copies) + len(plan.jobs)
         done = 0
@@ -185,7 +185,8 @@ class Runner:
         if opts.patch:
             from . import patcher
             try:
-                result.patched = patcher.apply_patches(plan, self.out)
+                hook = plan.patch_hook or patcher.apply_patches
+                result.patched = hook(plan, self.out)
                 for p in result.patched:
                     self._log("info", f"patched {p}")
             except Exception as e:  # noqa: BLE001

@@ -51,10 +51,18 @@ def main(argv: list[str] | None = None) -> int:
     a_an.add_argument("game")
     a_pl = sub.add_parser("plan")
     _add_opts(a_pl)
+    a_pl.add_argument("--mode", choices=["hires", "stock640"], default="hires", help="VX/Ace only (see README)")
     a_pl.add_argument("--json", action="store_true")
     a_run = sub.add_parser("run")
     _add_opts(a_run)
     a_run.add_argument("-o", "--output", required=True)
+    a_run.add_argument("--mode", choices=["hires", "stock640"], default="hires", help="VX/Ace only (see README)")
+    a_un = sub.add_parser("unpack", help="extract an encrypted RGSS archive (.rgss3a/.rgss2a/.rgssad)")
+    a_un.add_argument("game")
+    a_un.add_argument("-o", "--output")
+    a_sc = sub.add_parser("scripts", help="list or extract the Ruby scripts of a VX / VX Ace project")
+    a_sc.add_argument("game")
+    a_sc.add_argument("--extract", metavar="DIR")
     a_det = sub.add_parser("detect", help="identify the RPG Maker engine of a folder or file")
     a_det.add_argument("path")
     a_sv = sub.add_parser("saves", help="inspect and edit save files (MV, MZ, VX, VX Ace)")
@@ -80,9 +88,15 @@ def main(argv: list[str] | None = None) -> int:
     a_tr.add_argument("--file", help="translate each line of a UTF-8 text file")
     a_tr.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
-    if args.cmd in ("detect", "saves", "translate"):
+    if args.cmd in ("detect", "saves", "translate", "unpack", "scripts"):
         from .hubcli import run_hub_command
         return run_hub_command(args)
+    if args.cmd in ("analyze", "plan", "run"):
+        from .detect import detect_engine
+        info = detect_engine(args.game)
+        if info is not None and not info.is_html5:
+            from .hubcli import run_rgss_command
+            return run_rgss_command(args, info, _opts(args) if args.cmd != "analyze" else None)
     try:
         project = load_project(args.game)
         if args.cmd == "analyze":
