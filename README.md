@@ -88,6 +88,9 @@ rpgm-hub-cli translate TEXT... | --file F | status | install | import FILE.argos
 ```
 Optional real-engine checks (need node, playwright, Chromium and `git clone --depth 1 https://github.com/rpgtkoolmv/corescript`):
 `tools/run_e2e.sh CORESCRIPT WORKDIR FONT.ttf [--scale 2]` (ENCRYPT=1 for encrypted images) and `tools/e2e_saves.py SAMPLE_GAME`.
+VX/Ace Hires pack against a real mkxp-z: `RPGM_MKXPZ=/path/to/mkxp-z python -m pytest tests/test_e2e_mkxpz.py` (needs xvfb-run, openbox, xdotool, ImageMagick `import`;
+`RPGM_MKXPZ_RUBYLIB` for Ruby's zlib if the binary cannot find it). The translation model test takes `RPGM_HUB_ARGOS_MODEL=/path/ja_en.argosmodel`
+(https://argos-net.com/v1/translate-ja_en-1_1.argosmodel). mkxp-z reads `<exe name>.ini`, so the binary must be copied next to the game as `Game`.
 Fixtures: `tools/make_marshal_fixtures.rb`, `tools/make_save_fixtures.rb` (real Ruby). Design: `docs/plan.md`, `docs/plan-hub.md`.
 
 Licence: GPL-3.0 (see LICENSE). Not affiliated with Gotcha Gotcha Games / Kadokawa; "RPG Maker" is their trademark.
