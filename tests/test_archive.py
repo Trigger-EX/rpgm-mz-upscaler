@@ -64,3 +64,12 @@ def test_malicious_names_are_not_extracted(tmp_path, name):
     with pytest.raises(ar.ArchiveError, match="unsafe"):
         a.extract_all(tmp_path / "out")
     assert not (tmp_path / "evil.txt").exists()
+
+
+def test_vectorised_cipher_matches_the_reference_loop():
+    import os
+    from rpgm_upscaler.rgss import archive as a
+    for n in (0, 1, 3, 4, 5, 7, 8, 1023, 4099):
+        for key in (0, 1, 0xDEADCAFE, 0xFFFFFFFF):
+            d = os.urandom(n)
+            assert a._crypt_data(d, key) == a._crypt_data_py(d, key)

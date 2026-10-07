@@ -27,8 +27,8 @@ def _adv(k: int) -> int:
     return (k * 7 + 3) & M32
 
 
-def _crypt_data(data: bytes, key: int) -> bytes:
-    """XOR little-endian words with a rolling key; the trailing partial word uses the low bytes."""
+def _crypt_data_py(data: bytes, key: int) -> bytes:
+    """Reference implementation: XOR little-endian words with a rolling key; the trailing partial word uses the low bytes."""
     n = len(data)
     words = n // 4
     out = bytearray(n)
@@ -43,6 +43,32 @@ def _crypt_data(data: bytes, key: int) -> bytes:
     for i in range(words * 4, n):
         out[i] = data[i] ^ ((k >> (8 * (i - words * 4))) & 0xFF)
     return bytes(out)
+
+
+def _crypt_data(data: bytes | memoryview, key: int) -> bytes:
+    """Same cipher, vectorised: with k(i+1) = 7*k(i) + 3 (mod 2^32), k(i) = 7^i*key + 3*sum(7^j, j<i), computed with
+    wrapping uint32 arithmetic, so there is no Python int per word. Must equal `_crypt_data_py` (tests check this)."""
+    import numpy as np
+    n = len(data)
+    words = n // 4
+    if words == 0:
+        return _crypt_data_py(bytes(data), key)
+    with np.errstate(over="ignore"):
+        pw = np.empty(words, dtype=np.uint32)             # 7^i
+        pw[0] = 1
+        if words > 1:
+            pw[1:] = 7
+            np.cumprod(pw, out=pw)
+        csum = np.cumsum(pw, dtype=np.uint32)             # sum of 7^j for j <= i
+        sums = np.empty(words, dtype=np.uint32)           # sum of 7^j for j < i
+        sums[0] = 0
+        sums[1:] = csum[:-1]
+        keys = pw * np.uint32(key & M32) + np.uint32(3) * sums
+        vals = np.frombuffer(data, dtype="<u4", count=words)
+        head = (vals ^ keys).astype("<u4").tobytes()
+        k_next = (int(pw[-1]) * 7 * (key & M32) + 3 * int(csum[-1])) & M32      # key after the last full word
+    tail = bytes(data[words * 4:])
+    return head + bytes(b ^ ((k_next >> (8 * i)) & 0xFF) for i, b in enumerate(tail))
 
 
 def _decode_name(raw: bytes) -> str:
