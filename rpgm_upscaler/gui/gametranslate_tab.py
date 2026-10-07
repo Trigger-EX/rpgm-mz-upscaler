@@ -66,9 +66,10 @@ class GameTranslateTab(QWidget):
         self.mem_edit = QLineEdit(); self.mem_edit.setPlaceholderText("Optional: your corrections (memory.tsv from an earlier run)")
         self.mem_browse = QPushButton("Browse…")
         mrow = QHBoxLayout(); mrow.addWidget(self.mem_edit, 1); mrow.addWidget(self.mem_browse)
+        self.cb_fast = QCheckBox("Fast mode (several times quicker, slightly rougher wording)")
         self.cb_link = QCheckBox("Hard-link unchanged files instead of copying (saves disk space)")
         self.cb_over = QCheckBox("Allow a non-empty output folder")
-        ml.addRow("Message width:", self.wrap); ml.addRow("Memory:", mrow); ml.addRow(self.cb_link); ml.addRow(self.cb_over)
+        ml.addRow("Message width:", self.wrap); ml.addRow("Memory:", mrow); ml.addRow(self.cb_fast); ml.addRow(self.cb_link); ml.addRow(self.cb_over)
         v.addWidget(more)
 
         brow = QHBoxLayout()
@@ -150,7 +151,7 @@ class GameTranslateTab(QWidget):
                        plugin_params=self.cb_plugins.isChecked(), keep_referenced=self.cb_keep.isChecked(),
                        ocr=self.cb_ocr.isChecked(), ocr_scope=self.scope.currentData(), ocr_min_conf=self.conf.value(),
                        font=self.font_edit.text().strip() or None, wrap_chars=self.wrap.value() or None,
-                       memory=self.mem_edit.text().strip() or None, copy_mode="link" if self.cb_link.isChecked() else "copy",
+                       memory=self.mem_edit.text().strip() or None, copy_mode="link" if self.cb_link.isChecked() else "copy", beam=1 if self.cb_fast.isChecked() else 0,
                        overwrite=self.cb_over.isChecked())
 
     def start(self) -> None:

@@ -68,20 +68,21 @@ class NllbBackend:
     name = "nllb"
     SRC, TGT = "jpn_Jpan", "eng_Latn"
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, beam: int = 4):
         ok, why = deps_available()
         if not ok:
             raise ArgosError(why)
         import ctranslate2
         import sentencepiece as spm
         self.dir = Path(directory)
+        self.beam = beam                      # 4 is the quality default; 1-2 is several times faster
         self._sp = spm.SentencePieceProcessor(model_file=str(self.dir / "sentencepiece.bpe.model"))
         self._tr = ctranslate2.Translator(str(self.dir), device="cpu", inter_threads=1, intra_threads=os.cpu_count() or 4)
         self._lock = threading.Lock()
 
     @property
     def tag(self) -> str:
-        return "nllb-200-600m-int8"
+        return "nllb-200-600m-int8" + ("" if self.beam == 4 else f"-b{self.beam}")     # results differ per beam, so do cached ones
 
     def translate_batch(self, texts: list[str]) -> list[str]:
         if not texts:
@@ -89,7 +90,7 @@ class NllbBackend:
         src = [[self.SRC] + self._sp.encode(t, out_type=str) + ["</s>"] for t in texts]
         order = sorted(range(len(src)), key=lambda i: len(src[i]))
         with self._lock:
-            res = self._tr.translate_batch([src[i] for i in order], target_prefix=[[self.TGT]] * len(order), beam_size=4,
+            res = self._tr.translate_batch([src[i] for i in order], target_prefix=[[self.TGT]] * len(order), beam_size=self.beam,
                                            max_decoding_length=200, max_batch_size=16, no_repeat_ngram_size=5)
         out = [""] * len(texts)
         for i, r in zip(order, res):

@@ -48,6 +48,7 @@ class Options:
     copy_mode: str = "copy"             # copy | link
     overwrite: bool = False
     workers: int = 0                    # image workers; 0 = auto
+    beam: int = 0                       # model search width; 0 = the model's default (4), 1 = fast
 
 
 @dataclass
@@ -275,6 +276,8 @@ def translate_game(src: str | Path, out: str | Path, translator, opts: Options |
     # 3. translate
     if hasattr(translator, "set_terms"):
         translator.set_terms({})
+    if opts.beam and hasattr(translator, "set_beam"):
+        translator.set_beam(opts.beam)
     if opts.memory:
         translator.overrides.update(_load_memory(opts.memory))
     literals = _script_literals(info, out, loaded) if opts.keep_referenced else set()

@@ -96,7 +96,8 @@ def _translate_game_cmd(args) -> int:
     opts = Options(dialogue=not args.no_dialogue, database=not args.no_database, system=not args.no_system,
                    plugin_params=not args.no_plugin_params, ocr=args.ocr, ocr_scope=args.ocr_scope, ocr_min_conf=args.ocr_min_conf,
                    font=args.font, wrap_chars=args.wrap_chars, copy_mode="link" if args.link else "copy", overwrite=args.overwrite,
-                   workers=args.workers, memory=args.memory, keep_referenced=not args.no_keep_referenced)
+                   workers=args.workers, memory=args.memory, keep_referenced=not args.no_keep_referenced,
+                   beam=args.beam or (1 if args.fast else 0))
     last = {"stage": "", "pct": -1}
 
     def prog(stage, done, total):

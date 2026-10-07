@@ -77,6 +77,7 @@ class Translator:
         self._load_overrides()
         self._backend = backend
         self._secondary = None
+        self.beam: int | None = None                  # None = each backend's own default
         self._load_lock = threading.RLock()
         self._backend_tried = backend is not None or not use_default_backend
         self._backend_error = ""
@@ -118,9 +119,21 @@ class Translator:
                 except Exception as e:  # noqa: BLE001
                     self._backend_error = str(e)
             self._backend = loaded[0] if loaded else None
+            self._apply_beam()
             self._secondary = loaded[1] if len(loaded) > 1 else None
             self._backend_tried = True
         return self._backend
+
+    def set_beam(self, beam: int | None) -> None:
+        """Search width of the neural model: 1-2 trades some quality for speed. Only backends that have a beam use it."""
+        self.beam = beam
+        self._apply_beam()
+
+    def _apply_beam(self) -> None:
+        if self.beam:
+            for b in (self._backend, self._secondary):
+                if b is not None and hasattr(b, "beam"):
+                    b.beam = self.beam
 
     def reload_backend(self) -> None:
         self._backend, self._secondary, self._backend_tried, self._backend_error = None, None, False, ""

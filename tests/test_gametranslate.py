@@ -391,3 +391,17 @@ def test_sound_effects_are_transliterated_not_invented(tr):
     r = tr.translate_many(["むにゃ…", "ゴゴゴ", "今日はいい天気ですね。"], romaji=False)
     assert r[0].text.lower().startswith("munya") and r[1].text.lower() == "gogogo"
     assert called == ["今日はいい天気ですね。"]
+
+
+def test_fast_option_sets_the_backend_beam_and_keys_the_cache(tmp_path, tr):
+    from rpgm_upscaler.translate.nllb import NllbBackend
+    b = NllbBackend.__new__(NllbBackend)
+    b.beam = 4
+    assert b.tag == "nllb-200-600m-int8"
+    tr._backend = b
+    tr.set_beam(1)
+    assert b.beam == 1 and b.tag.endswith("-b1")
+    g = mv_game(tmp_path)
+    tr._backend = DictBackend()
+    run(g, tmp_path / "out", tr, beam=2)
+    assert tr.beam == 2
