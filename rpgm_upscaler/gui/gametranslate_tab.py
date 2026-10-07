@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
-from .worker import GameTranslateWorker
+from .worker import DepsWorker, GameTranslateWorker
 
 _STAGES = {"copy": "Copying the game", "scan": "Reading game data", "translate": "Translating", "images": "Scanning images"}
 
@@ -21,6 +21,7 @@ class GameTranslateTab(QWidget):
         self.ctx = ctx
         self._worker: GameTranslateWorker | None = None
         self._out_dir: Path | None = None
+        self._deps_worker: DepsWorker | None = None
         v = QVBoxLayout(self)
         self.game_label = QLabel("Open a game on the Project page first."); self.game_label.setTextFormat(Qt.PlainText)
         self.game_label.setWordWrap(True)
@@ -57,7 +58,11 @@ class GameTranslateTab(QWidget):
         frow = QHBoxLayout(); frow.addWidget(self.font_edit, 1); frow.addWidget(self.font_browse)
         il.addRow("Scan:", self.scope); il.addRow("Sensitivity:", self.conf); il.addRow("Font:", frow)
         self.ocr_status = QLabel(); self.ocr_status.setWordWrap(True); self.ocr_status.setTextFormat(Qt.PlainText)
-        il.addRow(self.ocr_status)
+        self.ocr_deps_btn = QPushButton("Install Python packages")
+        self.ocr_deps_btn.setToolTip("Installs OpenCV (opencv-python-headless) into the hub's private virtual environment, "
+                                     "creating it first when the system Python refuses pip. Tesseract itself is not a pip package.")
+        self.ocr_deps_btn.setVisible(False)
+        il.addRow(self.ocr_status); il.addRow(self.ocr_deps_btn)
         v.addWidget(img)
 
         more = QGroupBox("Advanced")
@@ -89,6 +94,7 @@ class GameTranslateTab(QWidget):
         self.font_browse.clicked.connect(lambda: self._browse_file(self.font_edit, "Fonts (*.ttf *.otf *.ttc)"))
         self.mem_browse.clicked.connect(lambda: self._browse_file(self.mem_edit, "Tab-separated (*.tsv *.txt)"))
         self.cb_ocr.toggled.connect(self._refresh_ocr)
+        self.ocr_deps_btn.clicked.connect(self._start_ocr_deps)
         self.start_btn.clicked.connect(self.start)
         self.cancel_btn.clicked.connect(lambda: self._worker and self._worker.cancel())
         self.open_btn.clicked.connect(self._open_out)
@@ -138,6 +144,12 @@ class GameTranslateTab(QWidget):
         self.start_btn.setEnabled(self._worker is None)
         self.refresh_model()
 
+    def showEvent(self, ev) -> None:  # noqa: N802
+        """The model or packages may have been installed on the Translation page since this page last looked."""
+        super().showEvent(ev)
+        self.refresh_model()
+        self._refresh_ocr()
+
     def refresh_model(self) -> None:
         try:
             st = self.ctx.translator.status()
@@ -146,6 +158,9 @@ class GameTranslateTab(QWidget):
             return
         if st.get("model") == "ready":
             self.model_label.setText(f"Translation model: {st.get('active')} ready.")
+        elif st.get("model") == "deps-missing":
+            self.model_label.setText("A translation model is installed but its Python packages are missing: only dictionary words "
+                                     "will be translated. Click “Install Python packages” on the Translation page.")
         else:
             self.model_label.setText("No neural model is installed: only dictionary words will be translated. "
                                      "Install one on the Translation page (NLLB gives the best results).")
@@ -153,10 +168,41 @@ class GameTranslateTab(QWidget):
     def _refresh_ocr(self) -> None:
         if not self.cb_ocr.isChecked():
             self.ocr_status.setText("")
+            self.ocr_deps_btn.setVisible(False)
             return
         from ..translate.ocr import ocr_available
         ok, why = ocr_available(("jpn",))
         self.ocr_status.setText("Tesseract and OpenCV found." if ok else f"Image translation is not available: {why}")
+        self.ocr_deps_btn.setVisible(not ok and "OpenCV" in why)
+        self.ocr_deps_btn.setEnabled(self._deps_worker is None)
+
+    def _start_ocr_deps(self) -> None:
+        if self._deps_worker is not None:
+            return
+        from ..translate import pyenv
+        self._deps_worker = DepsWorker(self, pyenv.OCR_PACKAGES)
+        self._deps_worker.line.connect(lambda m: self.ctx.log.emit("info", m))
+        self._deps_worker.done.connect(self._ocr_deps_done)
+        self._deps_worker.failed.connect(self._ocr_deps_failed)
+        self.ocr_deps_btn.setEnabled(False)
+        self.ocr_status.setText("Installing OpenCV… (progress is in the Log page)")
+        self._deps_worker.start()
+
+    def _ocr_deps_finished(self) -> None:
+        w, self._deps_worker = self._deps_worker, None
+        if w is not None:
+            w.deleteLater()
+
+    def _ocr_deps_done(self, where: str) -> None:
+        self._ocr_deps_finished()
+        self.ctx.log.emit("info", f"image translation packages installed in {where}")
+        self._refresh_ocr()
+
+    def _ocr_deps_failed(self, msg: str) -> None:
+        self._ocr_deps_finished()
+        self.ctx.log.emit("error", f"image translation packages: {msg}")
+        self._refresh_ocr()
+        QMessageBox.warning(self, "Python packages", msg)
 
     def _browse_out(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Output folder", self.out_edit.text() or str(Path.home()))
@@ -243,6 +289,9 @@ class GameTranslateTab(QWidget):
 
     def shutdown(self) -> bool:
         self._save_settings()
+        if self._deps_worker is not None:
+            self._deps_worker.cancel()
+            self._deps_worker.wait(15000)
         w = self._worker
         if w is None:
             return True

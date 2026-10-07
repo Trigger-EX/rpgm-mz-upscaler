@@ -62,9 +62,23 @@ class OcrBackend(Protocol):
     def detect(self, img: Image.Image) -> list[TextRegion]: ...
 
 
-def ocr_available(langs: tuple[str, ...] = ("jpn",)) -> tuple[bool, str]:
+def _load_cv2() -> bool:
+    """Import OpenCV, also when it was pip-installed into the hub's private venv after this module was loaded."""
+    global cv2
     if cv2 is None:
-        return False, "OpenCV is missing. Install with: pip install opencv-python-headless"
+        from . import pyenv
+        pyenv.activate()
+        try:
+            import cv2 as _cv2
+            cv2 = _cv2
+        except ImportError:
+            pass
+    return cv2 is not None
+
+
+def ocr_available(langs: tuple[str, ...] = ("jpn",)) -> tuple[bool, str]:
+    if not _load_cv2():
+        return False, "OpenCV is missing. Install with: pip install opencv-python-headless (or use the Install Python packages button)"
     exe = shutil.which("tesseract")
     if not exe:
         return False, "the tesseract binary is missing. Install it with your package manager (apt install tesseract-ocr tesseract-ocr-jpn)"
