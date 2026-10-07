@@ -23,6 +23,41 @@ class EngineError(RuntimeError):
     pass
 
 
+def _runnable(p: Path) -> str | None:
+    return str(p) if p.is_file() and os.access(p, os.X_OK) else None
+
+
+def find_binary(binary: str, explicit: str | None = None) -> str | None:
+    """Locate an executable. Besides a plain PATH lookup this copes with what a GUI launched from a desktop menu sees
+    differently from a terminal: `~` entries in PATH, a PATH that only the user's login/interactive shell sets up, and
+    the usual install folders. `explicit` may be the binary itself or the folder holding it."""
+    if explicit:
+        p = Path(explicit).expanduser()
+        return _runnable(p / binary) if p.is_dir() else _runnable(p)
+    found = shutil.which(binary)
+    if found:
+        return found
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d and (hit := _runnable(Path(d).expanduser() / binary)):
+            return hit
+    home = Path.home()
+    for d in (home / ".local/bin", home / "bin", Path("/usr/local/bin"), Path("/opt/homebrew/bin"), Path("/snap/bin"),
+              home / ".local/share/flatpak/exports/bin", Path("/var/lib/flatpak/exports/bin")):
+        if hit := _runnable(d / binary):
+            return hit
+    shell = os.environ.get("SHELL")
+    if shell and os.name == "posix":
+        try:
+            r = subprocess.run([shell, "-l", "-i", "-c", f"command -v {binary}"], capture_output=True, text=True,
+                               timeout=5, stdin=subprocess.DEVNULL)
+            for line in reversed(r.stdout.splitlines()):
+                if line.startswith("/") and (hit := _runnable(Path(line.strip()))):
+                    return hit
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return None
+
+
 def _resize_alpha_safe(img: Image.Image, w: int, h: int, method: int) -> Image.Image:
     return img.resize((w, h), method)  # Pillow premultiplies RGBA internally for non-NEAREST
 
@@ -57,7 +92,7 @@ class NcnnEngine:
         if kind not in NCNN_ENGINES:
             raise EngineError(f"unknown engine {kind}")
         self.kind = kind
-        self.exe = exe or shutil.which(NCNN_ENGINES[kind])
+        self.exe = find_binary(NCNN_ENGINES[kind], exe)
         if not self.exe:
             raise EngineError(f"{NCNN_ENGINES[kind]} not found")
         self.model = model or ("realesr-animevideov3-x4" if kind == "realesrgan" else "models-cunet")
@@ -173,8 +208,8 @@ def detect_engines(extra_paths: dict[str, str] | None = None) -> dict[str, tuple
     """Return {engine: (available, detail)}."""
     out: dict[str, tuple[bool, str]] = {e: (True, "built in") for e in PILLOW_ENGINES}
     for kind, binary in NCNN_ENGINES.items():
-        exe = (extra_paths or {}).get(kind) or shutil.which(binary)
-        if exe and os.access(exe, os.X_OK):
+        exe = find_binary(binary, (extra_paths or {}).get(kind))
+        if exe:
             out[kind] = (True, exe)
         else:
             out[kind] = (False, f"{binary} not found on PATH")
