@@ -12,6 +12,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..detect import ci_child
+from . import fonts as fontmod
 from . import scripts as sc
 
 HUB_TITLE = "▼ RPGM Hub Resolution"
@@ -121,12 +122,16 @@ def apply_hires(plan, out: Path) -> list[str]:
         if path is not None and str(path) not in cfg["RTP"]:
             cfg["RTP"].append(str(path))
             found.append(f"{name} -> {path}")
+    try:
+        plan.warnings.extend(fontmod.provide_fonts(plan.project.base, out, cfg, fontmod.script_sources(plan.project.base, plan.project.scripts_path)))
+    except OSError as e:
+        plan.warnings.append(f"font setup failed: {e}")
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     w, h = plan.project.screen
     (out / "README-HUB.txt").write_text(README.format(title=plan.project.title or "your game", n=n, w=w, h=h, ww=round(w * n), wh=round(h * n),
                                                       rtp={"ACE": "RPGVXAce", "VX": "RPGVX", "XP": "Standard"}[plan.project.engine]), encoding="utf-8")
     plan.warnings.extend(f"RTP found and added to mkxp.json: {f}" for f in found)
-    return ["mkxp.json", "README-HUB.txt"]
+    return ["mkxp.json", "README-HUB.txt"] + (["Fonts"] if (out / "Fonts").is_dir() else [])
 
 
 def render_script(width: int = 640, height: int = 480) -> str:
