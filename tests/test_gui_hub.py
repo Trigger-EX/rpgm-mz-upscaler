@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEventLoop, Qt, QTimer  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from rpgm_upscaler.saves.files import open_save  # noqa: E402
@@ -15,31 +15,9 @@ from rpgm_upscaler.translate.cache import Cache  # noqa: E402
 from rpgm_upscaler.translate.service import Translator  # noqa: E402
 from tests import fakesaves  # noqa: E402
 from tests.fakegame import make_game  # noqa: E402
+from tests.qtutil import wait_for  # noqa: E402
 
 FIX = Path(__file__).parent / "fixtures" / "rgss"
-
-
-def wait_for(cond, timeout=30000):
-    loop = QEventLoop()
-    t = QTimer(); t.setInterval(40)
-    waited = [0]
-
-    def tick():
-        waited[0] += 40
-        if cond() or waited[0] > timeout:
-            loop.quit()
-    t.timeout.connect(tick); t.start()
-    loop.exec(); t.stop()
-    return cond()
-
-
-@pytest.fixture(autouse=True)
-def no_modal_dialogs(monkeypatch):
-    """A modal box would block an offscreen test forever: answer every dialog instead."""
-    for name in ("question",):
-        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: QMessageBox.Yes))
-    for name in ("warning", "critical", "information"):
-        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: QMessageBox.Ok))
 
 
 @pytest.fixture
@@ -195,3 +173,115 @@ def test_hub_translate_game_tab(hub, tmp_path):
     t.cb_ocr.setChecked(True)
     assert t.ocr_status.text()
     assert t.shutdown()
+
+
+def test_opening_a_save_file_reads_it_once_and_selects_its_slot(hub, tmp_path, monkeypatch, dialogs):
+    from rpgm_upscaler.gui import saves_tab
+    g = make_game(tmp_path / "g", "MV")
+    fakesaves.write_mv(g / "save" / "file1.rpgsave")
+    second = fakesaves.write_mv(g / "save" / "file2.rpgsave")
+    opened = []
+    real = saves_tab.open_save
+    monkeypatch.setattr(saves_tab, "open_save", lambda p: (opened.append(Path(p).name), real(p))[1])
+    hub.open_save_file(str(second))
+    assert opened == ["file2.rpgsave"]                              # not file1 first and file2 after it
+    assert hub.saves.doc.path.name == "file2.rpgsave" and hub.saves.slots.currentRow() == 1
+    assert not [d for d in dialogs if d[0] == "question"]
+    hub.saves.wait_for_translation()
+
+
+def test_clicking_a_slot_loads_on_a_worker_and_only_the_last_click_wins(hub, tmp_path):
+    g = make_game(tmp_path / "g", "MV")
+    for n in (1, 2, 3):
+        fakesaves.write_mv(g / "save" / f"file{n}.rpgsave")
+    hub.open_project(str(g))
+    s = hub.saves
+    s.slots.setCurrentRow(1)
+    s.slots.setCurrentRow(2)                                        # a second request while the first may still be reading
+    assert wait_for(lambda: s.doc is not None and s.doc.path.name == "file3.rpgsave" and s.sw_table.isEnabled())
+    assert s.slots.currentRow() == 2
+    s.wait_for_translation()
+
+
+def test_a_refused_edit_puts_the_old_value_back_in_the_cell(hub, tmp_path, dialogs):
+    g = make_game(tmp_path / "g", "MV")
+    fakesaves.write_database(g)
+    fakesaves.write_mv(g / "save" / "file1.rpgsave")
+    hub.open_project(str(g))
+    s = hub.saves
+    r = 0
+    old = s.inv_table.item(r, 4).text()
+    s.inv_table.item(r, 4).setText("many")
+    assert s.inv_table.item(r, 4).text() == old and any(d[0] == "warning" for d in dialogs)
+    assert not s.doc.dirty
+    s.wait_for_translation()
+
+
+def test_dropping_a_game_folder_or_a_save_opens_it(hub, tmp_path):
+    from PySide6.QtCore import QMimeData, QUrl
+    g = make_game(tmp_path / "g", "MV")
+    f = fakesaves.write_mv(g / "save" / "file1.rpgsave")
+
+    class Ev:
+        def __init__(self, path):
+            self.m = QMimeData(); self.m.setUrls([QUrl.fromLocalFile(str(path))]); self.ok = False
+        def mimeData(self): return self.m
+        def acceptProposedAction(self): self.ok = True
+    ev = Ev(g)
+    hub.dragEnterEvent(ev); assert ev.ok
+    hub.dropEvent(Ev(g))
+    assert hub.ctx.info is not None and hub.ctx.info.engine == "MV"
+    hub.dropEvent(Ev(f))
+    assert hub.saves.doc is not None and hub.saves.doc.path.name == "file1.rpgsave" and hub.stack.currentWidget() is hub.saves
+    assert not Ev(tmp_path).ok
+    hub.saves.wait_for_translation()
+
+
+def test_settings_of_every_tab_survive_each_others_saves(tmp_path, monkeypatch):
+    from rpgm_upscaler.core.settings import load_settings, save_settings
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    save_settings({"source": "/a", "options": {"scale": "2"}})
+    save_settings({"translate_game": {"fast": True}})
+    save_settings({"source": "/b"})
+    assert load_settings() == {"source": "/b", "options": {"scale": "2"}, "translate_game": {"fast": True}}
+
+
+def test_game_translate_options_are_remembered(hub, tmp_path):
+    t = hub.game_translate
+    t.cb_fast.setChecked(True); t.cb_dialogue.setChecked(False); t.wrap.setValue(33); t.font_edit.setText("/f.ttf")
+    t.shutdown()
+    from rpgm_upscaler.gui.gametranslate_tab import GameTranslateTab
+    again = GameTranslateTab(hub.ctx)
+    assert again.cb_fast.isChecked() and not again.cb_dialogue.isChecked() and again.wrap.value() == 33 and again.font_edit.text() == "/f.ttf"
+
+
+def test_preview_picked_while_one_renders_is_queued_not_dropped(hub, tmp_path):
+    g = make_game(tmp_path / "g", "MZ")
+    up = hub.upscale
+    up.src_edit.setText(str(g)); up.out_edit.setText(str(tmp_path / "out"))
+    up.analyze()
+    assert wait_for(lambda: up.plan is not None)
+    up.table.selectRow(0)
+    assert up.files.count() > 0
+
+    class Busy:
+        def isRunning(self): return True
+    up._preview_worker = Busy()
+    up.files.setCurrentRow(0)
+    assert up._preview_pending == 0
+    up._preview_worker = None
+    up._preview_finished()
+    assert wait_for(lambda: up.before_lbl.pixmap() is not None and not up.before_lbl.pixmap().isNull())
+    assert up._preview_pending is None
+
+
+def test_preview_pixmaps_are_crisp_for_small_images_and_hidpi_aware():
+    from PIL import Image
+    from rpgm_upscaler.gui.upscale_tab import pil_to_pixmap
+    img = Image.new("RGBA", (4, 4), (255, 0, 0, 255)); img.putpixel((1, 1), (0, 0, 255, 255))
+    pm = pil_to_pixmap(img, max_side=64, dpr=1.0)
+    assert pm.width() == 64                                         # enlarged by a whole factor of 16
+    qi = pm.toImage()
+    assert qi.pixelColor(20, 20).blue() == 255 and qi.pixelColor(20, 20).red() == 0 and qi.pixelColor(15, 15).red() == 255
+    big = pil_to_pixmap(Image.new("RGBA", (400, 100)), max_side=100, dpr=2.0)
+    assert big.devicePixelRatio() == 2.0 and big.width() == 200

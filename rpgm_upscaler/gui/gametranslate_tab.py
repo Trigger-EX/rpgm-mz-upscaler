@@ -93,7 +93,37 @@ class GameTranslateTab(QWidget):
         self.open_btn.clicked.connect(self._open_out)
         ctx.project_changed.connect(self._project_changed)
         self._project_changed(ctx.info)
+        self._load_settings()
         self._refresh_ocr()
+
+    # ---- remembered options (the output folder is per game and is not kept)
+    def _checks(self) -> dict:
+        return {"dialogue": self.cb_dialogue, "database": self.cb_database, "system": self.cb_system, "plugins": self.cb_plugins,
+                "keep": self.cb_keep, "ocr": self.cb_ocr, "fast": self.cb_fast, "link": self.cb_link}
+
+    def _load_settings(self) -> None:
+        from ..core.settings import load_settings
+        s = load_settings().get("translate_game", {})
+        for k, cb in self._checks().items():
+            if isinstance(s.get(k), bool):
+                cb.setChecked(s[k])
+        if isinstance(s.get("conf"), (int, float)):
+            self.conf.setValue(float(s["conf"]))
+        if isinstance(s.get("wrap"), int):
+            self.wrap.setValue(s["wrap"])
+        i = self.scope.findData(s.get("scope"))
+        if i >= 0:
+            self.scope.setCurrentIndex(i)
+        for key, edit in (("font", self.font_edit), ("memory", self.mem_edit)):
+            if isinstance(s.get(key), str):
+                edit.setText(s[key])
+
+    def _save_settings(self) -> None:
+        from ..core.settings import save_settings
+        data = {k: cb.isChecked() for k, cb in self._checks().items()}
+        data.update(conf=self.conf.value(), wrap=self.wrap.value(), scope=self.scope.currentData(),
+                    font=self.font_edit.text().strip(), memory=self.mem_edit.text().strip())
+        save_settings({"translate_game": data})
 
     # ---- helpers
     def _project_changed(self, info) -> None:
@@ -162,6 +192,7 @@ class GameTranslateTab(QWidget):
             QMessageBox.warning(self, "Translate game", "Choose an output folder.")
             return
         self._out_dir = Path(out)
+        self._save_settings()
         self.result.clear()
         self._set_running(True)
         self._worker = GameTranslateWorker(self.ctx.translator, str(self.ctx.info.root), out, self.options(), self)
@@ -210,6 +241,7 @@ class GameTranslateTab(QWidget):
         self.stage.setText("")
 
     def shutdown(self) -> bool:
+        self._save_settings()
         w = self._worker
         if w is None:
             return True

@@ -5,24 +5,10 @@ import pytest
 pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tests.fakegame import make_game  # noqa: E402
-
-
-def wait_for(cond, timeout=60000):
-    loop = QEventLoop()
-    t = QTimer(); t.setInterval(50)
-    waited = [0]
-
-    def tick():
-        waited[0] += 50
-        if cond() or waited[0] > timeout:
-            loop.quit()
-    t.timeout.connect(tick); t.start()
-    loop.exec(); t.stop()
-    return cond()
+from tests.qtutil import wait_for  # noqa: E402
 
 
 def test_gui_flow(tmp_path, monkeypatch):

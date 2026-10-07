@@ -104,6 +104,28 @@ class PreviewWorker(QThread):
             self.failed.emit(str(e))
 
 
+class SaveLoadWorker(QThread):
+    """Opens a save file and its database names off the UI thread (a large MV save takes seconds to decompress)."""
+    loaded = Signal(object, object, int)      # doc, names, request number
+    failed = Signal(str, int)
+
+    def __init__(self, path, seq: int, parent=None):
+        super().__init__(parent)
+        self.path, self.seq = path, seq
+
+    def run(self) -> None:
+        from ..saves.database import load_names
+        from ..saves.files import open_save
+        from ..saves.model import SaveError
+        try:
+            doc = open_save(self.path)
+            self.loaded.emit(doc, load_names(self.path), self.seq)
+        except SaveError as e:
+            self.failed.emit(str(e), self.seq)
+        except Exception as e:  # noqa: BLE001  (a malformed save must not kill the thread silently)
+            self.failed.emit(f"{type(e).__name__}: {e}", self.seq)
+
+
 class TranslateWorker(QThread):
     """Translates labels in chunks so the UI can fill its English column as results arrive."""
     chunk = Signal(object)          # {japanese: english}
