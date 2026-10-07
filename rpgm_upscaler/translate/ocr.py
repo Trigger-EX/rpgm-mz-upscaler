@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import re
 import shutil
 import subprocess
@@ -96,7 +97,8 @@ class Tesseract:
             p = Path(td) / "in.png"
             cv2.imwrite(str(p), gray)
             r = subprocess.run([self.exe, str(p), "stdout", "-l", lang, "--psm", str(psm), "-c", "preserve_interword_spaces=0", "tsv"],
-                               capture_output=True, text=True, timeout=self.timeout)
+                               capture_output=True, text=True, timeout=self.timeout,
+                               env={**os.environ, "OMP_THREAD_LIMIT": "1"})        # we already run several images in parallel
         rows = []
         for rec in csv.DictReader(io.StringIO(r.stdout), delimiter="\t", quoting=csv.QUOTE_NONE):
             try:
@@ -119,7 +121,8 @@ class Tesseract:
             if ja == 0 or ja < 0.5 * len(text):
                 continue
             conf = sum(w["c"] for w in ws) / len(ws)
-            if conf < self.min_conf:
+            lh = max(w["h"] for w in ws) / s
+            if conf < self.min_conf or lh < 8 or (ja < 2 and not (conf >= 85 and lh >= 24)):    # lone glyphs (一, 口) are usually art
                 continue
             x0, y0 = min(w["x"] for w in ws), min(w["y"] for w in ws)
             x1, y1 = max(w["x"] + w["w"] for w in ws), max(w["y"] + w["h"] for w in ws)
@@ -133,13 +136,17 @@ class Tesseract:
             return []
         s = self.fixed_scale or (3.0 if max(h, w) <= 400 else 2.0 if max(h, w) <= 1400 else 1.0)
         found: list[TextRegion] = []
-        for v in _variants(gray):
-            big = cv2.resize(v, None, fx=s, fy=s, interpolation=cv2.INTER_CUBIC) if s != 1.0 else v
-            big = cv2.copyMakeBorder(big, 20, 20, 20, 20, cv2.BORDER_REPLICATE)
-            rows = self._run(big, "jpn", 11)
-            for r in rows:
-                r["x"] -= 20; r["y"] -= 20
-            found += self._lines(rows, s)
+        variants = _variants(gray)
+        for group in (variants[:2], variants[2:]):          # plain and inverted first; thresholded copies only if those find nothing
+            for v in group:
+                big = cv2.resize(v, None, fx=s, fy=s, interpolation=cv2.INTER_CUBIC) if s != 1.0 else v
+                big = cv2.copyMakeBorder(big, 20, 20, 20, 20, cv2.BORDER_REPLICATE)
+                rows = self._run(big, "jpn", 11)
+                for r in rows:
+                    r["x"] -= 20; r["y"] -= 20
+                found += self._lines(rows, s)
+            if found:
+                break
         if self.vertical and self.have_vert and h > w * 1.2 and not found:
             big = cv2.copyMakeBorder(cv2.resize(gray, None, fx=s, fy=s, interpolation=cv2.INTER_CUBIC), 20, 20, 20, 20, cv2.BORDER_REPLICATE)
             rows = self._run(big, "jpn_vert", 5)
@@ -280,7 +287,11 @@ def overlay_translation(img: Image.Image, regions: list[TextRegion], font_path: 
         bg_rgb = np.median(rgb[ring], axis=0) if ring.any() else np.array([0, 0, 0])
         fg = mask > 0
         fg_rgb = np.median(rgb[fg], axis=0) if fg.any() else np.array([255, 255, 255])
-        fixed = cv2.inpaint(rgb, mask, 3, cv2.INPAINT_TELEA)
+        if ring.any() and float(np.std(rgb[ring].astype(np.float32), axis=0).max()) < 6.0:
+            fixed = rgb.copy()
+            fixed[mask > 0] = bg_rgb.astype(np.uint8)                       # flat background: a plain fill leaves no smear
+        else:
+            fixed = cv2.inpaint(rgb, mask, 3, cv2.INPAINT_TELEA)
         crop[..., :3] = fixed
         crop[..., 3] = np.where(fg, bg_alpha, alpha)
         arr[y0:y1, x0:x1] = crop

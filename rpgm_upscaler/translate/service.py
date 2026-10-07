@@ -51,6 +51,7 @@ class Translator:
         self._load_overrides()
         self._backend = backend
         self._secondary = None
+        self._load_lock = threading.RLock()
         self._backend_tried = backend is not None or not use_default_backend
         self._backend_error = ""
 
@@ -76,8 +77,11 @@ class Translator:
     @property
     def backend(self):
         """Preferred model: NLLB if installed (better on colloquial lines), else Argos. The other one is kept as a fallback."""
-        if not self._backend_tried:
-            self._backend_tried = True
+        if self._backend_tried:
+            return self._backend
+        with self._load_lock:                                  # two workers must not each load a copy of the model
+            if self._backend_tried:
+                return self._backend
             loaded = []
             for finder, cls in ((nllb.find_installed, nllb.NllbBackend), (argos.find_installed, argos.ArgosBackend)):
                 model = finder()
@@ -89,6 +93,7 @@ class Translator:
                     self._backend_error = str(e)
             self._backend = loaded[0] if loaded else None
             self._secondary = loaded[1] if len(loaded) > 1 else None
+            self._backend_tried = True
         return self._backend
 
     def reload_backend(self) -> None:
@@ -98,10 +103,15 @@ class Translator:
         ok, why = argos.deps_available()
         a, n = argos.find_installed(), nllb.find_installed()
         model = n or a
-        b = self.backend if (ok and model) else None
-        state = "ready" if b else ("deps-missing" if model and not ok else "missing")
+        # report what is installed without loading it: this is called from the UI thread, and loading takes seconds
+        state = "ready" if (ok and model and not self._backend_error) else ("deps-missing" if model and not ok else "missing")
+        if ok and self._backend_tried and self._backend is None and model:
+            state = "missing"
+        injected = self._backend if (self._backend_tried and not model) else None      # a backend handed in by the caller
+        if injected is not None:
+            state = "ready"
         return {"model": state, "model_path": str(model) if model else None, "deps": ok, "deps_hint": why,
-                "models": {"nllb": bool(n), "argos": bool(a)}, "active": getattr(b, "name", None),
+                "models": {"nllb": bool(n), "argos": bool(a)}, "active": getattr(injected, "name", None) or ("nllb" if n else "argos" if a else None),
                 "error": self._backend_error, "glossary_size": len(self.glossary), "overrides": len(self.overrides)}
 
     # ---- translation

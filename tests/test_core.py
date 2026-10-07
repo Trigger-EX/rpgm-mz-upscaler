@@ -9,6 +9,7 @@ from PIL import Image
 
 from rpgm_upscaler.cli import main as cli_main
 from rpgm_upscaler.core import categories, crypto, engines, imageops, patcher, scaling
+from rpgm_upscaler.core import runner as runner_mod
 from rpgm_upscaler.core.planner import build_plan
 from rpgm_upscaler.core.project import ProjectError, load_project
 from rpgm_upscaler.core.runner import RunError, Runner, validate_output
@@ -341,3 +342,39 @@ def test_large_scale_warns_about_gpu_memory(tmp_path):
     plan = build_plan(load_project(g), Options(movies=False, scale="3"))
     assert any("map textures" in w for w in plan.warnings)
     assert not any("map textures" in w for w in build_plan(load_project(g), Options(movies=False)).warnings)
+
+
+def test_failed_job_keeps_the_original_asset(tmp_path, monkeypatch):
+    g = make_game(tmp_path / "g", "MV")
+    real = runner_mod.process_image
+
+    def flaky(job, *a, **k):
+        if job.src.endswith("pictures/Pic.png") or "Pic." in job.src:
+            raise RuntimeError("boom")
+        return real(job, *a, **k)
+
+    monkeypatch.setattr(runner_mod, "process_image", flaky)
+    plan = build_plan(load_project(g), Options(workers=1, movies=False))
+    out = tmp_path / "out"
+    res = Runner(plan, out).run()
+    assert len(res.failed) == 1 and res.failed[0][0].endswith("Pic.png") or "Pic." in res.failed[0][0]
+    src = [p for p in (g / "img/pictures").iterdir() if p.name.startswith("Pic.")][0]
+    assert (out / "img/pictures" / src.name).read_bytes() == src.read_bytes()          # the game can still load it
+
+
+def test_category_lookup_ignores_folder_case():
+    from pathlib import PurePosixPath as P
+    assert categories.category_for(P("img/Characters/Actor1.png")).name == "characters"
+    assert categories.category_for(P("IMG/faces/Actor1.png")).name == "faces"
+
+
+def test_plugin_defined_resolution_is_detected():
+    from rpgm_upscaler.core.project import plugin_screen
+    size, notes = plugin_screen([{"name": "Community_Basic", "status": True, "parameters": {"screenWidth": "1280", "screenHeight": "720"}},
+                                 {"name": "Off", "status": False, "parameters": {"screenWidth": "640", "screenHeight": "480"}}])
+    assert size == (1280, 720) and "Community_Basic" in notes[0]
+    assert plugin_screen([{"name": "Foo", "status": True, "parameters": {"Width": "50", "Height": "40"}}])[0] is None      # not a screen
+    size, notes = plugin_screen([{"name": "YEP_CoreEngine", "status": True, "parameters": {"Screen Width": "1008", "Screen Height": "624"}}])
+    assert size == (1008, 624)
+    _, notes = plugin_screen([{"name": "MUSH_MenuOptionScreenResolution", "status": True, "parameters": {"MOSR_ResolutionOptions": "[[816,624]]"}}])
+    assert "run time" in notes[0]

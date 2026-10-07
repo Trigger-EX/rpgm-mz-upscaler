@@ -54,8 +54,10 @@ class RunWorker(QThread):
         super().__init__(parent)
         self.path, self.out, self.opts, self.mode = path, out, opts, mode
         self.runner: Runner | None = None
+        self._cancelled = False          # a cancel that arrives while the plan is still being built must not be lost
 
     def cancel(self) -> None:
+        self._cancelled = True
         if self.runner:
             self.runner.cancel()
 
@@ -66,6 +68,8 @@ class RunWorker(QThread):
             for w in plan.warnings:
                 self.log.emit("warning", w)
             self.runner = Runner(plan, self.out, self.progress.emit, self.log.emit)
+            if self._cancelled:
+                self.runner.cancel()
             self.finished_run.emit(self.runner.run())
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))

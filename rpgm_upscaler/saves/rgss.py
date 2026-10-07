@@ -182,10 +182,14 @@ class MarshalSave(SaveDoc):
                 continue
             pl.ivars["@" + axis] = int(v)
             real = pl.ivars.get("@real_" + axis)
-            if isinstance(real, float):                       # Ace: tiles as float
-                pl.ivars["@real_" + axis] = m.RFloat(float(v))
-            elif real is not None:                            # VX: 1/256 tile units
+            if real is None:
+                continue
+            if getattr(self, "engine", "ACE") == "VX":        # VX: 1/256 tile units
                 pl.ivars["@real_" + axis] = int(v) * 256
+            elif isinstance(real, float):                     # Ace: tiles; a standing player may hold an Integer, a moving one a Float
+                pl.ivars["@real_" + axis] = m.RFloat(float(v))
+            else:
+                pl.ivars["@real_" + axis] = int(v)
         if "@transferring" in pl.ivars:
             pl.ivars["@transferring"] = False
 

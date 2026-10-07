@@ -235,3 +235,13 @@ def test_cli_detect_list_dump_set(tmp_path, capsys):
         main(["saves", "set", str(f), "--gold", "abc"])
     assert e.value.code == 2
     assert main(["saves", "set", str(f), "--item", "bogus:1=1"]) == 2
+
+
+def test_ace_position_when_real_xy_is_an_integer(tmp_path):
+    """A standing Ace player holds Integer @real_x/@real_y; writing x*256 there would put the player far off the map."""
+    g = copy_fixture(tmp_path, "ace_game")
+    s = open_save(g / "Save01.rvdata2")
+    pl = s._o("Game_Player")
+    pl.ivars["@real_x"], pl.ivars["@real_y"] = 7, 8
+    s.set_position(x=4, y=5)
+    assert pl.ivars["@real_x"] == 4 and pl.ivars["@real_y"] == 5 and isinstance(pl.ivars["@real_x"], int)

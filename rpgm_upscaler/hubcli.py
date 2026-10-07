@@ -317,6 +317,9 @@ def run_hub_command(args) -> int:
             if args.pos:
                 x, y = (int(t) for t in args.pos.split(","))
             doc.set_position(args.map, x, y)
+        if not doc.dirty:
+            print("nothing to change (no edit options given)", file=sys.stderr)
+            return 2
         doc.save()
         print(f"saved {doc.path} (backup kept)")
         return 0

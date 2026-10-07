@@ -82,6 +82,34 @@ def _mv_screen(web: Path) -> tuple[int, int]:
     return w, h
 
 
+_SCREEN_KEYS = [("screenwidth", "screenheight"), ("screen width", "screen height"), ("resolutionwidth", "resolutionheight"),
+                ("gamewidth", "gameheight"), ("width", "height")]
+
+
+def plugin_screen(entries: list[dict]) -> tuple[tuple[int, int] | None, list[str]]:
+    """Resolution set by a plugin (Community_Basic `screenWidth`, YEP Core Engine `Screen Width`, ...): (size, notes).
+    Many commercial MV games change the screen this way, and the size in rpg_managers.js is then wrong."""
+    size, notes = None, []
+    for e in entries:
+        if not e.get("status", True):
+            continue
+        name = str(e.get("name", ""))
+        params = {str(k).strip().lower(): v for k, v in (e.get("parameters") or {}).items()}
+        for kw, kh in _SCREEN_KEYS[:-1] if not re.search(r"(?i)screen|resol|core|basic|window", name) else _SCREEN_KEYS:
+            try:
+                w, h = int(float(params[kw])), int(float(params[kh]))
+            except (KeyError, ValueError, TypeError):
+                continue
+            if w >= 320 and h >= 240:
+                size = (w, h)
+                notes.append(f"Plugin {name} sets the screen to {w}x{h}; using that as the original size.")
+                break
+        if any("resolutionoptions" in k.replace("_", "") for k in params):
+            notes.append(f"Plugin {name} lets the player pick the resolution at run time; the upscaled UI assumes one fixed size "
+                         "(check the result, or pass --orig).")
+    return size, notes
+
+
 def load_project(path: str | Path) -> Project:
     base = Path(path).expanduser().resolve()
     if not base.is_dir():
@@ -109,6 +137,16 @@ def load_project(path: str | Path) -> Project:
         p.tile_size = int(system.get("tileSize", 48))
     else:
         p.screen = _mv_screen(web)
+        pj0 = web / "js" / "plugins.js"
+        if pj0.is_file():
+            from .patcher import parse_plugins_js
+            try:
+                size, notes = plugin_screen(parse_plugins_js(pj0.read_text(encoding="utf-8"))[1])
+                if size:
+                    p.screen = size
+                p.warnings += notes
+            except Exception:  # noqa: BLE001  (reported below when plugins.js is parsed again)
+                pass
         p.ui_area = p.screen
         p.font_size = 28
 

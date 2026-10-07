@@ -6,6 +6,7 @@ import logging
 import multiprocessing
 import os
 import shutil
+import time
 import threading
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass, field
@@ -112,6 +113,9 @@ class Runner:
         n = plan.scale.n
         result = RunResult()
         self.out.mkdir(parents=True, exist_ok=True)
+        for t in self.out.rglob("*.tmp"):                # half-written images from a run that was killed
+            if Path(t.name[:-4]).suffix.lower() in (".png", ".png_", ".rpgmvp", ".jpg", ".jpeg", ".bmp", ".webp"):
+                t.unlink(missing_ok=True)
         digest = opts.digest(n)
         manifest = self._load_manifest() if opts.resume else {}
         manifest = {k: v for k, v in manifest.items() if v.get("opts") == digest}
@@ -152,6 +156,8 @@ class Runner:
             self._log("info", f"Resuming: {result.skipped} assets already done")
         self.on_progress(done, total, "")
 
+        last_save = [time.monotonic()]
+
         def finish(job: Job, err: Exception | None) -> None:
             nonlocal done
             done += 1
@@ -159,9 +165,20 @@ class Runner:
                 result.ok += 1
                 manifest[job.src] = {"opts": digest, "sig": _file_sig(base / job.src)}
                 self._log("info", f"ok   {job.src}")
+                if time.monotonic() - last_save[0] > 10:      # resume must survive a kill or power loss, not only a clean exit
+                    self._save_manifest(manifest)
+                    last_save[0] = time.monotonic()
             else:
                 result.failed.append((job.src, str(err)))
                 self._log("error", f"FAIL {job.src}: {err}")
+                if not job.keep_source:                       # never leave the game without the asset it asks for
+                    try:
+                        keep = self.out / job.src
+                        keep.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(base / job.src, keep)
+                        self._log("warning", f"kept the original (not upscaled): {job.src}")
+                    except OSError as e2:
+                        self._log("error", f"could not keep the original of {job.src}: {e2}")
             self.on_progress(done, total, job.src)
 
         try:
