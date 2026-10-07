@@ -249,3 +249,22 @@ def test_xp_game_is_detected_planned_and_upscaled_as_a_hires_pack(tmp_path, arch
 def imageops_size(p):
     with Image.open(p) as im:
         return im.size
+
+
+def test_hires_gives_missing_fonts_a_stand_in(tmp_path, monkeypatch):
+    from rpgm_upscaler.core.settings import Options
+    from rpgm_upscaler.rgss import fonts
+    from rpgm_upscaler.rgss.planner import build_plan
+    from rpgm_upscaler.rgss.project import load_rgss_project
+    fdir = tmp_path / "sysfonts"; fdir.mkdir()
+    (fdir / "IPAGothic.ttf").write_bytes(b"fake")
+    monkeypatch.setattr(fonts, "SYSTEM_DIRS", [str(fdir)])
+    monkeypatch.setattr(fonts, "_fc_list", lambda: {})
+    assert fonts.script_font_names(['Font.default_name = "UmePlus Gothic"', "Font.default_name = ['A B', 'C']"]) == ["UmePlus Gothic", "A B", "C"]
+    g = make_ace(tmp_path / "g", ace=True)
+    plan = build_plan(load_rgss_project(g), Options(), "hires")
+    out = tmp_path / "out"; out.mkdir()
+    patch.apply_hires(plan, out)
+    cfg = json.loads((out / "mkxp.json").read_text())
+    assert "UmePlus Gothic>IPAGothic" in cfg["fontSub"] and "MS Gothic>IPAGothic" in cfg["fontSub"]
+    assert (out / "Fonts" / "IPAGothic.ttf").is_file()
