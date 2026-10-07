@@ -155,9 +155,10 @@ class ModelWorker(QThread):
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, source: str | None = None, parent=None):
+    def __init__(self, source: str | None = None, parent=None, model: str = "argos", entry: dict | None = None):
         super().__init__(parent)
         self.source = source            # None = download, else path to a .argosmodel / extracted folder
+        self.model, self.entry = model, entry      # which model to download, and the link a Fetch found for it (or None)
         import threading
         self._cancel = threading.Event()
 
@@ -169,9 +170,53 @@ class ModelWorker(QThread):
         try:
             if self.source:
                 path = argos.import_package(self.source)
+            elif self.model == "nllb":
+                from ..translate import nllb
+                e = self.entry
+                path = (nllb.install(self.progress.emit, self._cancel, base_url=e["url"], files=e["files"]) if e
+                        else nllb.install(self.progress.emit, self._cancel))
             else:
-                path = argos.install(progress=self.progress.emit, cancel=self._cancel)
+                path = argos.install(progress=self.progress.emit, cancel=self._cancel,
+                                     entry=self.entry["entry"] if self.entry else None)
             self.done.emit(str(path))
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))
+
+
+class FetchWorker(QThread):
+    """Looks up the download link of the newest version of a model (network, but no download)."""
+    done = Signal(str, object)      # model key, entry
+    failed = Signal(str)
+
+    def __init__(self, model: str, parent=None):
+        super().__init__(parent)
+        self.model = model
+
+    def run(self) -> None:
+        from ..translate import argos, nllb
+        try:
+            self.done.emit(self.model, (nllb if self.model == "nllb" else argos).fetch_entry())
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))
+
+
+class DepsWorker(QThread):
+    """pip-installs the translation packages, into a private venv when the system Python is externally managed."""
+    line = Signal(str)
+    done = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    def run(self) -> None:
+        from ..translate import pyenv
+        try:
+            self.done.emit(pyenv.install_packages(pyenv.TRANSLATE_PACKAGES, self.line.emit, self._cancel))
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
 

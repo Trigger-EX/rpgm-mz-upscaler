@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
+from PySide6.QtWidgets import (QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
-from .worker import ModelWorker, TranslateWorker
+from .worker import DepsWorker, FetchWorker, ModelWorker, TranslateWorker
 
 
 class TranslateTab(QWidget):
@@ -14,19 +14,36 @@ class TranslateTab(QWidget):
         self.ctx = ctx
         self._model_worker: ModelWorker | None = None
         self._try_worker: TranslateWorker | None = None
+        self._deps_worker: DepsWorker | None = None
+        self._fetch_worker: FetchWorker | None = None
+        self._entries: dict[str, dict] = {}         # model key -> the link a Fetch found
         self._loading = False
         v = QVBoxLayout(self)
         self.status = QLabel(); self.status.setWordWrap(True); self.status.setTextFormat(Qt.PlainText)
         v.addWidget(self.status)
         row = QHBoxLayout()
-        self.install_btn = QPushButton("Install translation model (download once)")
+        self.deps_btn = QPushButton("Install Python packages")
+        self.deps_btn.setToolTip("Creates a private virtual environment for the hub (when the system Python refuses pip) "
+                                 "and installs ctranslate2 and sentencepiece into it.")
+        self.model_box = QComboBox()
+        self.model_box.addItem("NLLB-200 600M: best quality, about 620 MB, CC-BY-NC", "nllb")
+        self.model_box.addItem("Argos ja→en: small and fast, lower quality", "argos")
+        self.fetch_btn = QPushButton("Fetch latest")
+        self.fetch_btn.setToolTip("Looks up the download link of the newest version of the selected model. Downloads nothing.")
+        self.install_btn = QPushButton("Install selected model")
         self.import_btn = QPushButton("Import .argosmodel file…")
         self.cancel_btn = QPushButton("Cancel"); self.cancel_btn.setEnabled(False)
         self.clear_btn = QPushButton("Clear cache")
-        for w in (self.install_btn, self.import_btn, self.cancel_btn, self.clear_btn):
+        for w in (self.deps_btn, self.install_btn, self.import_btn, self.cancel_btn, self.clear_btn):
             row.addWidget(w)
         row.addStretch(1)
         v.addLayout(row)
+        mrow = QHBoxLayout()
+        mrow.addWidget(QLabel("Offline model:")); mrow.addWidget(self.model_box, 1); mrow.addWidget(self.fetch_btn)
+        v.addLayout(mrow)
+        self.fetch_info = QLabel(""); self.fetch_info.setWordWrap(True); self.fetch_info.setTextFormat(Qt.PlainText)
+        self.fetch_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        v.addWidget(self.fetch_info)
         self.progress = QProgressBar(); self.progress.setVisible(False)
         v.addWidget(self.progress)
         note = QLabel("Without the model, names are translated with the built-in RPG glossary and romaji (always offline). "
@@ -52,9 +69,12 @@ class TranslateTab(QWidget):
         brow.addWidget(self.add_row); brow.addWidget(self.del_row); brow.addStretch(1)
         v.addLayout(brow)
 
+        self.deps_btn.clicked.connect(self._start_deps)
+        self.fetch_btn.clicked.connect(self._start_fetch)
+        self.model_box.currentIndexChanged.connect(self._show_entry)
         self.install_btn.clicked.connect(lambda: self._start_model(None))
         self.import_btn.clicked.connect(self._import_dialog)
-        self.cancel_btn.clicked.connect(lambda: self._model_worker and self._model_worker.cancel())
+        self.cancel_btn.clicked.connect(self._cancel)
         self.clear_btn.clicked.connect(self._clear_cache)
         self.try_btn.clicked.connect(self._try)
         self.try_in.returnPressed.connect(self._try)
@@ -74,7 +94,9 @@ class TranslateTab(QWidget):
         if st["error"]:
             lines.append(f"Model error: {st['error']}")
         if st["model"] == "missing" and not st["deps"]:
-            lines.append("To use the neural model you also need: " + st["deps_hint"].split(": ", 1)[-1])
+            lines.append("To use the neural model you also need: " + st["deps_hint"].split(": ", 1)[-1] +
+                         "\n(or click “Install Python packages”: the hub makes its own virtual environment for them)")
+        self.deps_btn.setVisible(not st["deps"])
         self.status.setText("\n".join(lines))
         self._loading = True
         self.table.setRowCount(0)
@@ -85,11 +107,70 @@ class TranslateTab(QWidget):
 
     # ---- model install -----------------------------------------------------------------------------------
     def _busy(self, busy: bool) -> None:
-        for w in (self.install_btn, self.import_btn):
+        for w in (self.deps_btn, self.install_btn, self.import_btn, self.fetch_btn, self.model_box):
             w.setEnabled(not busy)
-        self.cancel_btn.setEnabled(busy and self._model_worker is not None and self._model_worker.source is None)
+        self.cancel_btn.setEnabled(busy and (self._deps_running() or
+                                             (self._model_worker is not None and self._model_worker.source is None)))
         self.progress.setVisible(busy)
         self.progress.setRange(0, 0 if busy else 1)
+
+    def _deps_running(self) -> bool:
+        return self._deps_worker is not None and self._deps_worker.isRunning()
+
+    def _cancel(self) -> None:
+        for w in (self._deps_worker, self._model_worker):
+            if w is not None and w.isRunning():
+                w.cancel()
+
+    def _start_deps(self) -> None:
+        if self._deps_running() or (self._model_worker is not None and self._model_worker.isRunning()):
+            return
+        self._deps_worker = DepsWorker(self)
+        self._deps_worker.line.connect(lambda m: self.ctx.log.emit("info", m))
+        self._deps_worker.done.connect(self._deps_done)
+        self._deps_worker.failed.connect(self._deps_failed)
+        self._busy(True)
+        self.progress.setRange(0, 0)
+        self._deps_worker.start()
+
+    def _deps_done(self, where: str) -> None:
+        self._busy(False)
+        self.ctx.translator.reload_backend()
+        self.ctx.log.emit("info", f"translation packages installed in {where}")
+        self.refresh()
+
+    def _deps_failed(self, msg: str) -> None:
+        self._busy(False)
+        self.ctx.log.emit("error", f"translation packages: {msg}")
+        QMessageBox.warning(self, "Python packages", msg)
+
+    def _start_fetch(self) -> None:
+        if self._fetch_worker is not None and self._fetch_worker.isRunning():
+            return
+        self.fetch_info.setText("Looking up the latest version…")
+        self.fetch_btn.setEnabled(False)
+        self._fetch_worker = FetchWorker(self.model_box.currentData(), self)
+        self._fetch_worker.done.connect(self._fetch_done)
+        self._fetch_worker.failed.connect(self._fetch_failed)
+        self._fetch_worker.start()
+
+    def _fetch_done(self, key: str, entry: dict) -> None:
+        self.fetch_btn.setEnabled(True)
+        self._entries[key] = entry
+        self._show_entry()
+
+    def _fetch_failed(self, msg: str) -> None:
+        self.fetch_btn.setEnabled(True)
+        self.fetch_info.setText(f"Fetch failed: {msg}")
+        self.ctx.log.emit("error", f"model lookup: {msg}")
+
+    def _show_entry(self) -> None:
+        e = self._entries.get(self.model_box.currentData())
+        if e is None:
+            self.fetch_info.setText("")
+            return
+        size = f", {e['size'] / 1e6:.0f} MB" if e["size"] else ""
+        self.fetch_info.setText(f"Latest {e['name']}: version {e['version']}{size}\n{e['url']}")
 
     def _import_dialog(self) -> None:
         f, _ = QFileDialog.getOpenFileName(self, "Import an Argos model", "", "Argos models (*.argosmodel);;All files (*)")
@@ -99,7 +180,8 @@ class TranslateTab(QWidget):
     def _start_model(self, source: str | None) -> None:
         if self._model_worker is not None and self._model_worker.isRunning():
             return
-        self._model_worker = ModelWorker(source, self)
+        key = self.model_box.currentData()
+        self._model_worker = ModelWorker(source, self, key, self._entries.get(key))
         self._model_worker.progress.connect(self._model_progress)
         self._model_worker.done.connect(self._model_done)
         self._model_worker.failed.connect(self._model_failed)
@@ -154,9 +236,9 @@ class TranslateTab(QWidget):
             self.table.removeRow(idx)
 
     def shutdown(self) -> bool:
-        for w in (self._model_worker, self._try_worker):
+        for w in (self._model_worker, self._try_worker, self._deps_worker, self._fetch_worker):
             if w is not None and w.isRunning():
-                if isinstance(w, ModelWorker):
+                if isinstance(w, (ModelWorker, DepsWorker)):
                     w.cancel()
                 if not w.wait(20000):                     # never destroy a running QThread: refuse to close instead
                     return False

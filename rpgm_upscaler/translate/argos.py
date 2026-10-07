@@ -18,8 +18,15 @@ from typing import Callable
 INDEX_URL = "https://raw.githubusercontent.com/argosopentech/argospm-index/main/index.json"
 
 
+USER_AGENT = "Mozilla/5.0 (compatible; rpgm-upscaler)"      # the default "Python-urllib" agent is answered with 403 by argos-net.com
+
+
 class ArgosError(Exception):
     pass
+
+
+def open_url(url: str, timeout: int = 30):
+    return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}), timeout=timeout)  # noqa: S310
 
 
 def data_dir() -> Path:
@@ -43,12 +50,14 @@ def find_installed(src: str = "ja", dst: str = "en") -> Path | None:
 
 
 def deps_available() -> tuple[bool, str]:
+    from . import pyenv
+    pyenv.activate()
     try:
         import ctranslate2  # noqa: F401
         import sentencepiece  # noqa: F401
         return True, ""
     except ImportError as e:
-        return False, f"missing {e.name}. Install with: pip install ctranslate2 sentencepiece"
+        return False, f"missing {e.name}. Install with: pip install ctranslate2 sentencepiece (or use the Translation tab's Install Python packages button)"
 
 
 def package_version(model_dir: Path) -> str:
@@ -105,7 +114,7 @@ def import_package(path: str | Path, dest: Path | None = None) -> Path:
 
 
 def fetch_index_entry(src: str = "ja", dst: str = "en", url: str = INDEX_URL, timeout: int = 30) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as r:  # noqa: S310 (fixed https index)
+    with open_url(url, timeout) as r:
         index = json.load(r)
     cands = [p for p in index if p.get("from_code") == src and p.get("to_code") == dst]
     if not cands:
@@ -115,7 +124,7 @@ def fetch_index_entry(src: str = "ja", dst: str = "en", url: str = INDEX_URL, ti
 
 def download(url: str, dest: Path, progress: Callable[[int, int], None] | None = None,
              cancel: threading.Event | None = None, timeout: int = 60) -> None:
-    with urllib.request.urlopen(url, timeout=timeout) as r, open(dest, "wb") as f:  # noqa: S310
+    with open_url(url, timeout) as r, open(dest, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
         done = 0
         while True:
@@ -128,6 +137,15 @@ def download(url: str, dest: Path, progress: Callable[[int, int], None] | None =
             done += len(chunk)
             if progress:
                 progress(done, total)
+
+
+def fetch_entry(index_url: str = INDEX_URL) -> dict:
+    """Look up the newest ja->en package: {"name", "version", "url", "size"} (size 0 when unknown). Downloads nothing."""
+    e = fetch_index_entry(url=index_url)
+    links = [u for u in e.get("links", []) if u.startswith(("http://", "https://"))]
+    if not links:
+        raise ArgosError("the index lists no downloadable link for this model")
+    return {"name": "Argos ja→en", "version": str(e.get("package_version", "?")), "url": links[0], "size": 0, "entry": e}
 
 
 def install(progress: Callable[[int, int], None] | None = None, cancel: threading.Event | None = None,
