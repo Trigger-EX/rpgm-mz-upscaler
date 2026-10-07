@@ -159,6 +159,7 @@ class Translator:
                     done += len(pending[t])
                 else:
                     fresh.append(t)
+            fresh.sort(key=len)                       # similar lengths share a batch: far less padding, so much faster on a big game
             for start in range(0, len(fresh), 32):
                 if cancel is not None and cancel.is_set():
                     break

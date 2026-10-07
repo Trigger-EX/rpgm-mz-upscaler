@@ -100,8 +100,10 @@ rpgm-hub-cli translate-game GAME -o OUT [--ocr] [--ocr-scope likely|all] [--memo
   games with plugin-defined resolutions (e.g. a resolution-option plugin) are likely to need manual touch-up.
 
 ## Limitations
-* Only core-engine layouts of MV/MZ are patched; third-party plugins with hard-coded pixel values are not. Expect to touch up odd
-  screens (shops, equip, save list, custom HUDs).
+* Only core-engine layouts of MV/MZ are patched (including every core `*Width/*Height/*Spacing/*Padding` method that returns a bare
+  number); third-party plugins with hard-coded pixel values are not. Expect to touch up odd screens (custom HUDs and menus).
+* Games whose plugins let the player pick the resolution at run time are upscaled for one fixed size (the tool warns); a plugin that
+  sets one fixed resolution (Community_Basic, YEP Core Engine) is detected.
 * MV/MZ tilesets need big map textures (about ×2.7 is the practical limit; the planner warns).
 * Packaged games (`.nw`, exe with an archive) must be extracted first. Encrypted audio is copied unchanged.
 * Saves of games with custom scripts keep their extra data untouched, but the editor may not find non-standard gold/inventory.

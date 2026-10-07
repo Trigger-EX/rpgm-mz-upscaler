@@ -208,7 +208,7 @@ ctx.Utils = { RPGMAKER_NAME: "MZ" };
 ctx.ImageManager = {};
 for (const [name, base] of [["iconWidth", 32], ["iconHeight", 32], ["faceWidth", 144], ["faceHeight", 144]])
     Object.defineProperty(ctx.ImageManager, name, { get() { if (!("iconSize" in ctx.$dataSystem)) return base; return base; }, configurable: true });
-ctx.window = ctx;
+ctx.window = ctx; ctx.globalThis = ctx;
 const stubs = {};                                       // any other engine global becomes an empty class
 const scope = new Proxy(ctx, { has: () => true, get: (t, k) => typeof k === "symbol" ? undefined : k in t ? t[k] : k in globalThis ? globalThis[k] : (stubs[k] ||= class {}) });
 vm.createContext(ctx);
@@ -378,3 +378,36 @@ def test_plugin_defined_resolution_is_detected():
     assert size == (1008, 624)
     _, notes = plugin_screen([{"name": "MUSH_MenuOptionScreenResolution", "status": True, "parameters": {"MOSR_ResolutionOptions": "[[816,624]]"}}])
     assert "run time" in notes[0]
+
+
+def test_patch_scales_literal_window_sizes_once(tmp_path):
+    """`return <number>;` size methods are scaled; methods the patch already wraps are not scaled a second time."""
+    node = shutil.which("node") or "/opt/node22/bin/node"
+    if not (shutil.which("node") or Path(node).exists()):
+        pytest.skip("needs node")
+    g = make_game(tmp_path / "g", "MZ")
+    plan = build_plan(load_project(g), Options(workers=1, movies=False))
+    (tmp_path / "plugin.js").write_text(patcher.render_plugin(plan, "lanczos"))
+    (tmp_path / "run.js").write_text("""
+const vm = require("vm"), fs = require("fs");
+const errors = [];
+const ctx = { console: { error: (...a) => errors.push(a.join(" ")), warn() {}, info() {}, log() {} }, Utils: { RPGMAKER_NAME: "MZ" } };
+ctx.window = ctx; ctx.globalThis = ctx;
+function cls(name, methods) { const f = function () {}; for (const [k, v] of Object.entries(methods)) f.prototype[k] = eval("(function() {\\n    return " + v + ";\\n})"); ctx[name] = f; return f; }
+cls("Window_Options", { statusWidth: 120, windowWidth: 400, volumeOffset: 20, pageSize: 4, zeroWidth: 0 });
+cls("Window_NameEdit", { faceWidth: 144 });
+cls("Scene_Base", { mainCommandWidth: 240 });
+const stubs = {};
+const scope = new Proxy(ctx, { has: () => true, get: (t, k) => typeof k === "symbol" ? undefined : k in t ? t[k] : k in globalThis ? globalThis[k] : (stubs[k] ||= class {}) });
+vm.createContext(ctx);
+vm.runInContext("with (scope) {" + fs.readFileSync(process.argv[2], "utf8") + "}", Object.assign(ctx, { scope }));
+const o = new ctx.Window_Options();
+console.log(JSON.stringify({ errors, status: o.statusWidth(), win: o.windowWidth(), vol: o.volumeOffset(), page: o.pageSize(), zero: o.zeroWidth(),
+    face: new ctx.Window_NameEdit().faceWidth(), main: new ctx.Scene_Base().mainCommandWidth() }));
+""")
+    r = subprocess.run([node, str(tmp_path / "run.js"), str(tmp_path / "plugin.js")], capture_output=True, text=True)
+    res = json.loads(r.stdout)
+    n = plan.scale.n
+    assert not res["errors"], res["errors"]
+    assert res["status"] == round(120 * n) and res["win"] == round(400 * n) and res["face"] == round(144 * n) and res["main"] == round(240 * n)
+    assert res["vol"] == 20 and res["page"] == 4 and res["zero"] == 0                    # not pixel sizes

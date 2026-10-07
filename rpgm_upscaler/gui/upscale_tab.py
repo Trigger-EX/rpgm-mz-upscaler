@@ -400,7 +400,13 @@ class UpscaleTab(QWidget):
         if self.worker and self.worker.isRunning():
             if QMessageBox.question(self, "Quit", "A run is in progress. Cancel and quit?") != QMessageBox.Yes:
                 return False
-            self.worker.cancel(); self.worker.wait(15000)
+            self.worker.cancel()
+            if not self.worker.wait(60000):               # a QThread destroyed while running aborts the whole process
+                QMessageBox.information(self, "Quit", "The run is still stopping. Try closing again in a moment.")
+                return False
+        for w in (self._plan_worker, self._preview_worker):   # short jobs that cannot be cancelled: let them finish
+            if w is not None and w.isRunning() and not w.wait(60000):
+                return False
         self._release_prepared()
         self._save_settings()
         return True

@@ -517,5 +517,6 @@ class SavesTab(QWidget):
             return False
         if self._worker is not None and self._worker.isRunning():
             self._worker.stop()
-            self._worker.wait(5000)
+            if not self._worker.wait(20000):
+                return False
         return True

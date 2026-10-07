@@ -241,6 +241,31 @@ if (src(Sprite_Actor, "setActorHome")) {
     };
 }
 
+// ---- fixed pixel sizes that screens return as bare literals ------------------------------------
+// `Window_Options.windowWidth() { return 400; }`, `statusWidth() { return 120; }`, MZ `slotNameWidth() { return 138; }` ... The
+// methods patched above are already wrappers (not bare literals), so nothing is scaled twice; zeros and counts stay as they are.
+{
+    const NAME = /(Width|Height|Spacing|Padding|Margin)$/;
+    const LITERAL = /^function\s*\([^)]*\)\s*\{\s*return\s+(\d+)\s*;?\s*\}$/;
+    let scaled = 0;
+    for (const key of Object.getOwnPropertyNames(globalThis)) {
+        if (!/^(Window|Scene)_/.test(key)) continue;
+        let cls;
+        try { cls = globalThis[key]; } catch (e) { continue; }
+        if (typeof cls !== "function" || !cls.prototype) continue;
+        for (const m of Object.getOwnPropertyNames(cls.prototype)) {
+            if (!NAME.test(m)) continue;
+            const d = Object.getOwnPropertyDescriptor(cls.prototype, m);
+            const mt = d && typeof d.value === "function" ? LITERAL.exec(String(d.value).trim()) : null;
+            if (!mt || +mt[1] === 0) continue;
+            const v = +mt[1];
+            cls.prototype[m] = function () { return R(v); };
+            scaled++;
+        }
+    }
+    console.info(TAG, "fixed-size methods scaled:", scaled);
+}
+
 console.info(TAG, "loaded, world scale x" + N, isMZ ? "(MZ)" : "(MV)");
 } catch (e) { console.error("[UpscalerPatch] aborted:", e); }
 })();
