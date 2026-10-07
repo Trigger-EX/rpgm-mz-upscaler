@@ -16,7 +16,7 @@ RPGM Hub (Linux, PySide6 + CLI): upscale RPG Maker MV/MZ/VX Ace/VX games to 1080
 - Full suite: 152 passed, 6 skipped (run it through a Haiku agent). MV real-engine e2e 13/13 (one screenshot check is load-flaky).
 - Real Japanese MZ game (`samples/elweed/game`, git-ignored): translated (4352 strings, about 1 h with NLLB on 4 cores), upscaled, and title/menu/options compared with the original in Chromium.
 - Patch scales bare-number `*Width/*Height/*Spacing/*Padding` methods and `const ww = N` locals in rect methods.
-- Save map change done: `set_position` to another map reserves a transfer (`_transferring/_newMapId/_newX/_newY`; Ace/VX `@transferring/@new_map_id/...`) and leaves `_mapId` alone; `position()` reports the pending target. Unit-tested; `tools/e2e_saves.py` extended (copies the game, adds Map002, checks the map after Scene_Map) but NOT run for lack of a corescript checkout.
+- Save map change done: `set_position` to another map reserves a transfer (`_transferring/_newMapId/_newX/_newY`; Ace/VX `@transferring/@new_map_id/...`) and leaves `_mapId` alone; `position()` reports the pending target. Unit-tested, and `tools/e2e_saves.py` (copies the game, adds Map002, checks the map after Scene_Map) PASSES against the real MV engine. Corescript clones with `git clone https://github.com/rpgtkoolmv/corescript` (plain github.com curl is 403, git works).
 - Everything is committed and pushed.
 
 ## Remaining ranked items (most valuable first)
@@ -34,7 +34,7 @@ RPGM Hub (Linux, PySide6 + CLI): upscale RPG Maker MV/MZ/VX Ace/VX games to 1080
 MZ battle, shop and event screens and MZ audio; VX (not Ace); real `.rgss3a`; stock RGSS (`stock640`); OCR on decorative lettering.
 
 ## Next step
-Take item 1 (name pre-pass), with a regression test. Run `tools/run_e2e.sh`-style setup to verify `e2e_saves.py` when a corescript is available.
+Take item 1 (name pre-pass), with a regression test.
 
 ## Chat
 Base name: rpgm-mz-upscaler-27
