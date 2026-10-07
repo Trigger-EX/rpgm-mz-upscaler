@@ -68,8 +68,9 @@ class GameTranslateTab(QWidget):
         mrow = QHBoxLayout(); mrow.addWidget(self.mem_edit, 1); mrow.addWidget(self.mem_browse)
         self.cb_fast = QCheckBox("Fast mode (several times quicker, slightly rougher wording)")
         self.cb_link = QCheckBox("Hard-link unchanged files instead of copying (saves disk space)")
+        self.cb_resume = QCheckBox("Resume an earlier run in this folder (images already translated are kept)")
         self.cb_over = QCheckBox("Allow a non-empty output folder")
-        ml.addRow("Message width:", self.wrap); ml.addRow("Memory:", mrow); ml.addRow(self.cb_fast); ml.addRow(self.cb_link); ml.addRow(self.cb_over)
+        ml.addRow("Message width:", self.wrap); ml.addRow("Memory:", mrow); ml.addRow(self.cb_fast); ml.addRow(self.cb_link); ml.addRow(self.cb_resume); ml.addRow(self.cb_over)
         v.addWidget(more)
 
         brow = QHBoxLayout()
@@ -127,8 +128,8 @@ class GameTranslateTab(QWidget):
 
     # ---- helpers
     def _project_changed(self, info) -> None:
-        if info is None or info.engine == "XP":
-            self.game_label.setText("Open a supported game on the Project page first." if info is None else "RPG Maker XP is not supported yet.")
+        if info is None:
+            self.game_label.setText("Open a supported game on the Project page first.")
             self.start_btn.setEnabled(False)
             return
         self.game_label.setText(f"Game: {info.label}  —  {info.root}")
@@ -181,7 +182,7 @@ class GameTranslateTab(QWidget):
                        plugin_params=self.cb_plugins.isChecked(), keep_referenced=self.cb_keep.isChecked(),
                        ocr=self.cb_ocr.isChecked(), ocr_scope=self.scope.currentData(), ocr_min_conf=self.conf.value(),
                        font=self.font_edit.text().strip() or None, wrap_chars=self.wrap.value() or None,
-                       memory=self.mem_edit.text().strip() or None, copy_mode="link" if self.cb_link.isChecked() else "copy", beam=1 if self.cb_fast.isChecked() else 0,
+                       memory=self.mem_edit.text().strip() or None, copy_mode="link" if self.cb_link.isChecked() else "copy", beam=1 if self.cb_fast.isChecked() else 0, resume=self.cb_resume.isChecked(),
                        overwrite=self.cb_over.isChecked())
 
     def start(self) -> None:

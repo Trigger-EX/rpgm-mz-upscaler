@@ -91,7 +91,7 @@ class ProjectPage(QWidget):
 
     def _open_save_file(self) -> None:
         f, _ = QFileDialog.getOpenFileName(self, "Open a save file", self.edit.text() or str(Path.home()),
-                                           "Saves (*.rpgsave *.rmmzsave *.rvdata2 *.rvdata)")
+                                           "Saves (*.rpgsave *.rmmzsave *.rvdata2 *.rvdata *.rxdata)")
         if f:
             self.hub.open_save_file(f)
 
@@ -107,9 +107,9 @@ class ProjectPage(QWidget):
             return
         saves = len(find_saves(info.root))
         extra = f"  |  encrypted archive: {info.archive.name}" if info.archive else ""
-        sup = "" if info.engine != "XP" else "\nRPG Maker XP is recognised but not supported yet."
+        sup = ""
         self.badge.setText(f"{info.label}\n{info.root}\n{saves} save file(s) found{extra}{sup}")
-        self._enable_nav(info.engine != "XP")
+        self._enable_nav(True)
 
 
 class HubWindow(QMainWindow):
@@ -153,8 +153,7 @@ class HubWindow(QMainWindow):
         self.project_page.show_info(info, path)
         if info is not None:
             self.ctx.log.emit("info", f"opened {info.label}: {info.root}")
-            if info.engine != "XP":
-                self.upscale.set_project(str(info.root))
+            self.upscale.set_project(str(info.root))
         return info
 
     def open_save_file(self, path: str) -> None:
@@ -189,7 +188,7 @@ class HubWindow(QMainWindow):
     def open_dropped(self, path: str) -> None:
         p = Path(path)
         if p.is_file() and (p.suffix.lower() in (".rpgsave", ".rmmzsave")
-                            or (p.suffix.lower() in (".rvdata2", ".rvdata") and p.stem.lower().startswith("save"))):
+                            or (p.suffix.lower() in (".rvdata2", ".rvdata", ".rxdata") and p.stem.lower().startswith("save"))):
             self.open_save_file(str(p))
         elif p.is_file():
             self.open_project(str(p.parent))

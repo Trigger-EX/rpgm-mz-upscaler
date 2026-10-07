@@ -48,6 +48,7 @@ class Options:
     copy_mode: str = "copy"             # copy | link
     overwrite: bool = False
     workers: int = 0                    # image workers; 0 = auto
+    resume: bool = False                # continue in an existing output: images already overlaid there are not copied or scanned again
     beam: int = 0                       # model search width; 0 = the model's default (4), 1 = fast
 
 
@@ -82,6 +83,30 @@ def _validate_out(src: Path, out: Path, overwrite: bool) -> Path:
     if out.exists() and any(out.iterdir()) and not overwrite:
         raise GameTranslateError(f"{out} is not empty. Choose another folder or allow overwriting.")
     return out
+
+
+def _file_sig(p: Path) -> list[int]:
+    s = p.stat()
+    return [s.st_size, s.st_mtime_ns]
+
+
+def _finished_images(src: Path, out: Path) -> Callable[[Path], bool]:
+    """For a resumed run: True for a source file whose copy in `out` is an image already overlaid by an earlier run (it still
+    has the size and time recorded then, and the source has not changed since), so it must not be overwritten with the
+    untranslated original."""
+    try:
+        done = json.loads((out / ".translation" / "images.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return lambda p: False
+
+    def finished(p: Path) -> bool:
+        rel = p.relative_to(src).as_posix()
+        dst = out / rel
+        try:
+            return done.get(rel) == _file_sig(dst) and done.get(rel + "|src") == _file_sig(p)
+        except OSError:
+            return False
+    return finished
 
 
 def _mirror(src: Path, out: Path, mode: str, skip: Callable[[Path], bool], progress: Progress | None, cancel) -> None:
@@ -119,6 +144,8 @@ def _wrap_for_game(info: EngineInfo, proj, opts: Options) -> gt.Wrap:
     if info.is_html5:
         font = 28 if info.engine == "MV" else (proj.font_size or 26)
         return gt.wrap_for(info.engine, proj.ui_area[0] if info.engine == "MZ" else proj.screen[0], font)
+    if info.engine == "XP":
+        return gt.wrap_for("XP", 640, 22)
     return gt.wrap_for(info.engine, 544, 24 if info.engine == "ACE" else 20)
 
 
@@ -126,7 +153,7 @@ def _data_files(info: EngineInfo, out: Path) -> list[Path]:
     d = (out / info.web if info.web else out) / "data" if info.is_html5 else (ci_child(out, "Data") or out / "Data")
     if not d.is_dir():
         return []
-    exts = {".json"} if info.is_html5 else {".rvdata2", ".rvdata"}
+    exts = {".json"} if info.is_html5 else {".rvdata2", ".rvdata", ".rxdata"}
     return sorted(p for p in d.iterdir() if p.is_file() and p.suffix.lower() in exts)
 
 
@@ -164,11 +191,12 @@ def _script_literals(info: EngineInfo, out: Path, loaded: list[tuple[Path, objec
     else:
         from ..rgss import scripts as sc
         sf = next((f for f, _ in loaded if f.name.lower().startswith("scripts.")), None)
-        sp = ci_child(out / "Data", "Scripts.rvdata2") or ci_child(out / "Data", "Scripts.rvdata") or sf
+        sp = (ci_child(out / "Data", "Scripts.rvdata2") or ci_child(out / "Data", "Scripts.rvdata")
+              or ci_child(out / "Data", "Scripts.rxdata") or sf)
         if sp is not None and sp.is_file():
             try:
                 arr = sc.load(sp.read_bytes())
-                texts += [sc.source(e) for e in arr]
+                texts += [sc.source(e) for e in arr if sc._title(e).strip() != "Vocab"]      # Vocab is translated, not guarded
             except Exception:  # noqa: BLE001
                 pass
 
@@ -219,9 +247,7 @@ def translate_game(src: str | Path, out: str | Path, translator, opts: Options |
     info = detect_engine(src)
     if info is None:
         raise GameTranslateError(f"{src} is not an RPG Maker game folder I recognise.")
-    if info.engine == "XP":
-        raise GameTranslateError("RPG Maker XP games are not supported yet.")
-    out = _validate_out(info.root, Path(out), opts.overwrite)
+    out = _validate_out(info.root, Path(out), opts.overwrite or opts.resume)
     res = Result(engine=info.engine, out=out)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -233,7 +259,8 @@ def translate_game(src: str | Path, out: str | Path, translator, opts: Options |
             raise GameTranslateError(str(e)) from e
     # 1. mirror the game (an encrypted RGSS archive is unpacked instead of copied, so the translated loose files take priority)
     archive = info.archive
-    _mirror(info.root, out, opts.copy_mode, lambda p: archive is not None and p == archive, progress, cancel)
+    finished = _finished_images(info.root, out) if opts.resume else (lambda p: False)
+    _mirror(info.root, out, opts.copy_mode, lambda p: (archive is not None and p == archive) or finished(p), progress, cancel)
     if cancel is not None and cancel.is_set():
         res.cancelled = True
         return res
@@ -428,7 +455,7 @@ def _translate_images(info, proj, out: Path, translator, opts: Options, res: Res
         if cancel is not None and cancel.is_set():
             return
         rel = p.relative_to(out).as_posix()
-        if done.get(rel) == sig(p):
+        if done.get(rel) == sig(p) and (not opts.resume or done.get(rel + "|src") == sig(info.root / rel) or not (info.root / rel).is_file()):
             return
         try:
             img = imageops.load_image(p, key)
@@ -457,6 +484,9 @@ def _translate_images(info, proj, out: Path, translator, opts: Options, res: Res
                     res.regions += len(use)
         with lock:
             done[rel] = sig(p)
+            origin = info.root / rel
+            if origin.is_file():
+                done[rel + "|src"] = sig(origin)
             counter["n"] += 1
             if progress:
                 progress("images", counter["n"], len(images))

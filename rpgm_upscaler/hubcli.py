@@ -97,7 +97,7 @@ def _translate_game_cmd(args) -> int:
                    plugin_params=not args.no_plugin_params, ocr=args.ocr, ocr_scope=args.ocr_scope, ocr_min_conf=args.ocr_min_conf,
                    font=args.font, wrap_chars=args.wrap_chars, copy_mode="link" if args.link else "copy", overwrite=args.overwrite,
                    workers=args.workers, memory=args.memory, keep_referenced=not args.no_keep_referenced,
-                   beam=args.beam or (1 if args.fast else 0))
+                   beam=args.beam or (1 if args.fast else 0), resume=args.resume)
     last = {"stage": "", "pct": -1}
 
     def prog(stage, done, total):
@@ -173,9 +173,6 @@ def run_rgss_command(args, info, opts) -> int:
     from .rgss import pipeline
     from .rgss.planner import build_plan
     from .rgss.project import RgssProjectError
-    if info.engine == "XP":
-        print("RPG Maker XP games are detected but not supported yet.", file=sys.stderr)
-        return 2
     try:
         if args.cmd == "analyze":
             print(f"engine: {info.label}\nfolder: {info.root}\narchive: {info.archive.name if info.archive else 'none (loose files)'}")

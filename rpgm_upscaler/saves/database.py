@@ -83,6 +83,8 @@ def _marshal_names(data: Path, suffix: str) -> Names:
             v = sysobj.ivars.get(key)
             setattr(n, attr, [(x.text if isinstance(x, m.RString) else "") for x in v] if isinstance(v, list) else [])
         cu = sysobj.ivars.get("@currency_unit")
+        if cu is None and isinstance(sysobj.ivars.get("@words"), m.RObject):          # XP keeps it in the vocabulary
+            cu = sysobj.ivars["@words"].ivars.get("@gold")
         n.currency = cu.text if isinstance(cu, m.RString) else ""
     for attr, base in (("actors", "Actors"), ("items", "Items"), ("weapons", "Weapons"), ("armors", "Armors"), ("classes", "Classes")):
         arr = load(base)
@@ -102,6 +104,6 @@ def load_names(game: str | Path) -> Names:
     try:
         if info.is_html5:
             return _json_names(info.data_dir)
-        return _marshal_names(info.data_dir, ".rvdata2" if info.engine == "ACE" else ".rvdata")
+        return _marshal_names(info.data_dir, {"ACE": ".rvdata2", "VX": ".rvdata", "XP": ".rxdata"}[info.engine])
     except (OSError, ValueError, m.MarshalError, KeyError):
         return Names()

@@ -363,8 +363,6 @@ class UpscaleTab(QWidget):
         info = detect_engine(src)
         if info is None:
             QMessageBox.critical(self, "Not a project", "No RPG Maker project found (need index.html or Game.ini)."); return
-        if info.engine == "XP":
-            QMessageBox.critical(self, "Not supported", "RPG Maker XP is detected but not supported yet."); return
         opts = self.options()
         ok, detail = engines.detect_engines({opts.engine: opts.engine_path} if opts.engine_path else None)[opts.engine]
         if not ok:

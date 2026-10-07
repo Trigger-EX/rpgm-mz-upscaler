@@ -7,7 +7,7 @@ import unicodedata
 _JA = re.compile("[\u3040-\u309f\u30a0-\u30ff\u31f0-\u31ff\uff66-\uff9f\u3400-\u4dbf\u4e00-\u9fff]")
 # \C[2] \V[1] \N[1] \I[64] \G \. \| \! \{ \} \\, printf-style %1 %2, and plugin codes with any argument such as
 # \F[reia_normal] \FF[pose_01] \AA[FF] (standing pictures, name tags): everything the engine or a plugin parses must survive.
-_CODES = re.compile(r"\\[A-Za-z]+\[[^\]\n]*\]|\\[A-Za-z]+|\\[.|!><^${}]|\\\\|%\d")
+_CODES = re.compile(r"\\[A-Za-z]+\[[^\]\n]*\]|\\[A-Za-z]+|\\[.|!><^${}]|\\\\|%\d+\$[sdf]|%[sdf]|%\d")
 
 
 def is_japanese(text: str) -> bool:

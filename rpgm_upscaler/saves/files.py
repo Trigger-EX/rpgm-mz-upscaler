@@ -7,8 +7,8 @@ from pathlib import Path
 from ..detect import ci_child, detect_engine
 from .model import SaveDoc, SaveError
 
-SUFFIXES = {".rpgsave", ".rmmzsave", ".rvdata2", ".rvdata"}
-_RGSS_SAVE = re.compile(r"^save\d+\.rvdata2?$", re.I)
+SUFFIXES = {".rpgsave", ".rmmzsave", ".rvdata2", ".rvdata", ".rxdata"}
+_RGSS_SAVE = re.compile(r"^save\d+\.(rvdata2?|rxdata)$", re.I)
 
 
 def find_saves(path: str | Path) -> list[Path]:
@@ -47,7 +47,7 @@ def open_save(path: str | Path) -> SaveDoc:
             raise
         except Exception as e:  # noqa: BLE001
             raise SaveError(f"cannot read {p.name}: {e}") from e
-    if p.suffix in (".rvdata2", ".rvdata"):
+    if p.suffix in (".rvdata2", ".rvdata", ".rxdata"):
         from .rgss import MarshalSave
         try:
             return MarshalSave(p)

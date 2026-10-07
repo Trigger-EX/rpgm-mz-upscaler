@@ -18,6 +18,8 @@ MODES = ("hires", "stock640")
 def build_plan(project: RgssProject, opts: Options, mode: str = "hires") -> Plan:
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
+    if mode == "stock640" and project.engine == "XP":
+        raise ValueError("RPG Maker XP already runs at 640x480; use the hires mode")
     n = scaling.parse_scale(opts.scale, project.screen, tuple(opts.target))
     sp = scaling.ScalePlan(n=n, orig=project.screen, ui_orig=project.screen, target=tuple(opts.target), tile_orig=project.tile_size,
                            ui_fill=opts.ui_fill, anchor=opts.anchor)
@@ -49,11 +51,11 @@ def build_plan(project: RgssProject, opts: Options, mode: str = "hires") -> Plan
             plan.skipped_windowskins.append(rel.as_posix())
             plan.copies += 1
             continue
-        if c not in cat.FOLDERS:
+        if c not in (cat.XP_FOLDERS if project.engine == "XP" else cat.FOLDERS):
             msg = f"Graphics/{rel.parts[1]}: unknown folder scaled by x{n:g}"
             if msg not in plan.warnings:
                 plan.warnings.append(msg)
-        cell = cat.cell_size(c, stem, w, h, project.tile_kinds)
+        cell = cat.cell_size(c, stem, w, h, project.tile_kinds, project.engine)
         out_w = w // cell[0] * scaling.scaled(cell[0], n) if cell else scaling.scaled(w, n)
         out_h = h // cell[1] * scaling.scaled(cell[1], n) if cell else scaling.scaled(h, n)
         if (out_w, out_h) != (scaling.scaled(w, n), scaling.scaled(h, n)):

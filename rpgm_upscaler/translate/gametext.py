@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import copy
 import re
+import zlib
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..rgss import marshal as m
+from ..rgss import scripts as sc
 from .detect import is_japanese
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -97,6 +99,8 @@ class Wrap:
 def wrap_for(engine: str, screen_w: int, font: int) -> Wrap:
     """Estimate message-window capacity for English (about 0.55 em per character) from the engine's stock layout."""
     em = max(8.0, font * 0.55)
+    if engine == "XP":                       # 480 px message window (x 80..560) with 16 px padding, no faces; 640 px description window
+        return Wrap(chars=max(24, int(448 / em) - 2), face_chars=max(24, int(448 / em) - 2), wide_chars=max(30, int(608 / em) - 2))
     pad, face = {"MV": (18, 168), "MZ": (12, 164), "ACE": (12, 112), "VX": (8, 112)}.get(engine, (18, 168))
     usable = screen_w - 2 * pad
     return Wrap(chars=max(24, int(usable / em) - 2), face_chars=max(18, int((usable - face) / em) - 2),
@@ -189,12 +193,14 @@ def _join_lines(lines: list[str]) -> str:
 # ---------------------------------------------------------------------------------------------------------------------
 # event command lists (shared)
 
+_TEXT_ARG = re.compile(r"(?i)^(text|message|msg|title|label|name|description|caption|word|words|content|tooltip|help|prompt)\d*$")
 _MZ_NAME_CODES = {320: 1, 324: 1, 325: 1}      # change name / nickname / profile -> parameters[1]
 
 
 def collect_event_list(cmds: list, adapter, where: str, wrap: Wrap, col: Collected, engine: str) -> None:
     """Units for the text commands in one event list; the list itself is rebuilt after translation."""
     segs: list[Any] = []     # ("keep", cmd) | ("text", header, line_cmds, unit) | ("scroll", header, line_cmds, unit)
+    xp = engine == "XP"
     i = 0
     n = len(cmds)
     while i < n:
@@ -205,6 +211,8 @@ def collect_event_list(cmds: list, adapter, where: str, wrap: Wrap, col: Collect
             while j < n and adapter.code(cmds[j]) == 401:
                 j += 1
             lines = [adapter.text(adapter.params(x)[0]) if adapter.params(x) else "" for x in cmds[i + 1:j]]
+            if xp:                                              # XP: the 101 command carries the first line itself
+                lines = [adapter.text(adapter.params(c)[0]) if adapter.params(c) else ""] + lines
             sp_line = speaker_line(lines, col.known_names)
             sp_unit = None
             if sp_line:
@@ -245,6 +253,12 @@ def collect_event_list(cmds: list, adapter, where: str, wrap: Wrap, col: Collect
             if ps and isinstance(ps[0], list):
                 for k, ch in enumerate(ps[0]):
                     col.add("choice", adapter.text(ch), where, lambda u, ps=ps, k=k, ad=adapter: ps[0].__setitem__(k, ad.str_like(ps[0][k], u.en)))
+        elif code == 357 and adapter is _Json:                     # MZ plugin command: only arguments that are plainly text
+            ps = adapter.params(c)
+            args = ps[3] if len(ps) > 3 and isinstance(ps[3], dict) else {}
+            for key, val in args.items():
+                if isinstance(val, str) and _TEXT_ARG.match(str(key)):
+                    col.add("message", val, f"{where}:{adapter.text(ps[0])}.{key}", lambda u, args=args, key=key: args.__setitem__(key, u.en))
         elif code in _MZ_NAME_CODES:
             ps = adapter.params(c)
             k = _MZ_NAME_CODES[code]
@@ -270,9 +284,9 @@ def collect_event_list(cmds: list, adapter, where: str, wrap: Wrap, col: Collect
                 out.extend(line_cmds)
                 continue
             ind = adapter.indent(header)
-            like = adapter.params(line_cmds[0])[0] if line_cmds else None
+            like = adapter.params(line_cmds[0])[0] if line_cmds else (adapter.params(header)[0] if adapter.params(header) else None)
             if kind == "text":
-                face = bool(adapter.params(header) and adapter.text(adapter.params(header)[0]))
+                face = bool(not xp and adapter.params(header) and adapter.text(adapter.params(header)[0]))
                 lines = wrap_text(u.en, wrap.face_chars if face else wrap.chars)
                 label = None
                 if sp_line and sp_unit is not None and sp_unit.en:
@@ -282,8 +296,13 @@ def collect_event_list(cmds: list, adapter, where: str, wrap: Wrap, col: Collect
                 room = wrap.lines - (1 if label else 0)           # the label is repeated on every page
                 pages = [lines[k:k + room] for k in range(0, len(lines), room)] or [[""]]
                 for pi, page in enumerate(pages):
+                    page_lines = ([label] if label else []) + page
+                    if xp:                                          # first line in the 101 command, the others in 401s
+                        out.append(adapter.make(101, ind, [adapter.str_like(like, page_lines[0] if page_lines else "")]))
+                        out.extend(adapter.make(401, ind, [adapter.str_like(like, ln)]) for ln in page_lines[1:])
+                        continue
                     out.append(header if pi == 0 else adapter.clone(header))
-                    out.extend(adapter.make(401, ind, [adapter.str_like(like, ln)]) for ln in ([label] if label else []) + page)
+                    out.extend(adapter.make(401, ind, [adapter.str_like(like, ln)]) for ln in page_lines)
             else:
                 lines = wrap_text(u.en, wrap.wide_chars)
                 out.append(header)
@@ -402,9 +421,65 @@ def _rarr(arr, where, col: Collected, kind="term") -> None:
             _rstr(s, arr, i, f"{where}[{i}]", col, kind)
 
 
+def _ruby_literals(src: str) -> list[tuple[int, int, str, str]]:
+    """(start, end, quote, text) of every string literal on the code part of each line (a `#` outside a string starts a comment)."""
+    out: list[tuple[int, int, str, str]] = []
+    pos = 0
+    for line in src.splitlines(keepends=True):
+        i, n = 0, len(line)
+        while i < n:
+            c = line[i]
+            if c == "#":
+                break
+            if c in "\"'":
+                j = i + 1
+                while j < n and line[j] != c:
+                    j += 2 if line[j] == "\\" else 1
+                if j < n:
+                    out.append((pos + i, pos + j + 1, c, line[i + 1:j]))
+                i = j + 1
+                continue
+            i += 1
+        pos += n
+    return out
+
+
+def _collect_vocab(arr, name: str, col: Collected) -> None:
+    """Ace / VX keep many battle and system messages in the `Vocab` script as string constants (Victory, ObtainExp ...). The
+    constants are rewritten in the script source, so the Scripts file is changed only when something there was translated."""
+    for entry in arr:
+        if not (isinstance(entry, list) and len(entry) == 3 and sc._title(entry).strip() == "Vocab"):
+            continue
+        try:
+            src = sc.source(entry)
+        except Exception:  # noqa: BLE001
+            return
+        lits = [lit for lit in _ruby_literals(src) if is_japanese(lit[3])]
+        units: list[tuple[Unit, tuple[int, int, str, str]]] = []
+        for lit in lits:
+            u = Unit("term", lit[3].replace("\\\"", '"').replace("\\'", "'"), f"{name}#Vocab")
+            col.units.append(u)
+            units.append((u, lit))
+
+        def finish(entry=entry, src=src, units=units) -> None:
+            out, last, changed = [], 0, False
+            for u, (a, b, q, _t) in units:
+                if u.en and u.en != u.ja:
+                    esc = u.en.replace("\\", "\\\\").replace(q, "\\" + q)
+                    out.append(src[last:a]); out.append(q + esc + q)
+                    last, changed = b, True
+            if changed:
+                out.append(src[last:])
+                entry[2] = m.RString(zlib.compress("".join(out).encode("utf-8"), 9), dict(entry[2].ivars or {}))
+        col.finishers.append(finish)
+        return
+
+
 def collect_marshal(name: str, data: Any, wrap: Wrap, col: Collected, engine: str, *, do_events=True, do_db=True, do_system=True) -> None:
     stem = name.rsplit(".", 1)[0]
-    if stem in _R_FILES and do_db and isinstance(data, list):
+    if stem == "Scripts" and do_system and isinstance(data, list):
+        _collect_vocab(data, name, col)
+    elif stem in _R_FILES and do_db and isinstance(data, list):
         for row in data:
             if isinstance(row, m.RObject):
                 for key, kind in _R_FIELDS.get(row.cls, {}).items():
@@ -417,6 +492,10 @@ def collect_marshal(name: str, data: Any, wrap: Wrap, col: Collected, engine: st
         _rstr(iv.get("@currency_unit"), data, "@currency_unit", f"{name}.currency_unit", col, "term")
         for key in ("@elements", "@skill_types", "@weapon_types", "@armor_types"):
             _rarr(iv.get(key), f"{name}.{key}", col)
+        words = iv.get("@words")                                   # XP: RPG::System::Words (HP, Gold, Equip ...)
+        if isinstance(words, m.RObject):
+            for key, v in words.ivars.items():
+                _rstr(v, words, key, f"{name}.words.{key}", col, "term")
         terms = iv.get("@terms")
         if isinstance(terms, m.RObject):
             for key, v in terms.ivars.items():

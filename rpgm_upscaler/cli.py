@@ -106,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     a_tg.add_argument("--memory", metavar="TSV", help="your corrections (japanese<TAB>english, e.g. an edited .translation/memory.tsv) that win over the model")
     a_tg.add_argument("--no-keep-referenced", action="store_true", help="also translate names that scripts or plugins compare against (may break the game)")
     a_tg.add_argument("--link", action="store_true", help="hard-link unchanged files instead of copying them (saves disk space)")
+    a_tg.add_argument("--resume", action="store_true", help="continue an earlier run in the same output folder: text is redone (cached), images already handled are kept")
     a_tg.add_argument("--overwrite", action="store_true", help="allow a non-empty output folder")
     a_tg.add_argument("--fast", action="store_true", help="greedy decoding (beam 1): several times faster, slightly rougher wording")
     a_tg.add_argument("--beam", type=int, choices=[1, 2, 3, 4, 5], help="model search width (default 4; --fast is 1)")

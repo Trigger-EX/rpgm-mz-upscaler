@@ -60,7 +60,7 @@ def strip_json_comments(text: str) -> str:
     return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
 
 
-_RTP_DIRS = {"ACE": ("Enterbrain/RGSS3", "RGSS3"), "VX": ("Enterbrain/RGSS2", "RGSS2")}
+_RTP_DIRS = {"ACE": ("Enterbrain/RGSS3", "RGSS3"), "VX": ("Enterbrain/RGSS2", "RGSS2"), "XP": ("Enterbrain/RGSS", "RGSS")}
 
 
 def rtp_names(base: Path) -> list[str]:
@@ -109,7 +109,7 @@ def apply_hires(plan, out: Path) -> list[str]:
         except (OSError, ValueError):
             cfg = {}
     cfg.update({
-        "rgssVersion": 3 if plan.project.engine == "ACE" else 2,
+        "rgssVersion": {"ACE": 3, "VX": 2, "XP": 1}[plan.project.engine],
         "enableHires": True,
         "textureScalingFactor": n, "framebufferScalingFactor": n, "atlasScalingFactor": n,
         "fixedAspectRatio": True, "winResizable": True, "smoothScaling": 1, "vsync": True,
@@ -124,7 +124,7 @@ def apply_hires(plan, out: Path) -> list[str]:
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     w, h = plan.project.screen
     (out / "README-HUB.txt").write_text(README.format(title=plan.project.title or "your game", n=n, w=w, h=h, ww=round(w * n), wh=round(h * n),
-                                                      rtp="RPGVXAce" if plan.project.engine == "ACE" else "RPGVX"), encoding="utf-8")
+                                                      rtp={"ACE": "RPGVXAce", "VX": "RPGVX", "XP": "Standard"}[plan.project.engine]), encoding="utf-8")
     plan.warnings.extend(f"RTP found and added to mkxp.json: {f}" for f in found)
     return ["mkxp.json", "README-HUB.txt"]
 

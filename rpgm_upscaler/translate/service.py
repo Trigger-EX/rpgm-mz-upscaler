@@ -37,6 +37,7 @@ def cache_path() -> Path:
 PIPELINE = "+p6"      # bump when protection/splitting rules change so stale cached results are not reused
 
 
+_FMT = r"%\d+\$[sdf]|%[sdf]|%\d"        # printf-style fill-ins the engine substitutes (%1, %s, %1$s)
 _HIRA_ONLY = re.compile("[\u3041-\u309f]+")
 _KATA_ONLY = re.compile("[\u30a1-\u30fc]+")
 _KATA = re.compile("[\u30a1-\u30fc]")
@@ -303,7 +304,7 @@ class Translator:
         a name-like / number-like stand-in that models copy through, then swapped back. Formatting codes that started or ended
         the text (colour switches, picture codes) are put back at the edges; any other code is dropped rather than guessed."""
         protected, found = self._protect_all(text)
-        content = lambda i: bool(re.fullmatch(r"\\[NnPpVv]\[\d+\]|%\d", found[i])) or _is_term_code(found[i])      # noqa: E731  (filled in by the engine)
+        content = lambda i: bool(re.fullmatch(r"\\[NnPpVv]\[\d+\]|" + _FMT, found[i])) or _is_term_code(found[i])      # noqa: E731  (filled in by the engine)
         ph = re.compile(r"\[\[(\d+)\]\]\s*")
         lead = ""
         pos = 0
@@ -321,7 +322,7 @@ class Translator:
         def sub(mt):
             i = int(mt.group(1))
             c = found[i]
-            if re.fullmatch(r"\\[NnPp]\[\d+\]|%\d", c) or _is_term_code(c):          # actor/skill names filled in by the engine: %1 %2
+            if re.fullmatch(r"\\[NnPp]\[\d+\]|" + _FMT, c) or _is_term_code(c):          # actor/skill names filled in by the engine: %1 %2
                 tok = self._NAMES[len(tokens) % len(self._NAMES)]
             elif re.fullmatch(r"\\[Vv]\[\d+\]", c):
                 tok = str(7000 + 13 * len(tokens))

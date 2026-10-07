@@ -270,3 +270,30 @@ def test_marshal_same_map_position_updates_real_xy(tmp_path):
         s.set_position(x=4, y=5)
         pl = s._o("Game_Player").ivars
         assert pl["@x"] == 4 and pl["@real_x"] == want and not pl["@transferring"]
+
+
+# ---- XP -------------------------------------------------------------------------------------------------
+def test_xp_save_view_edit_roundtrip_and_map_transfer(tmp_path):
+    from tests.fakeace import make_xp, write_xp_save
+    g = make_xp(tmp_path / "xp")
+    f = write_xp_save(g / "Save1.rxdata")
+    assert find_saves(g) == [f]
+    s = open_save(f)
+    assert s.engine == "XP" and s.readonly is None
+    assert s.get_switch(1) and not s.get_switch(2) and s.switch_count() == 4 and s.get_variable(3) == 250 and s.gold() == 1234
+    assert s.party_ids() == [1, 2] and s.actor(1).name == "アレックス" and s.actor(2).mp == 40 and s.playtime() == "01:02:05"
+    assert s.inventory("items") == {1: 5, 3: 2} and s.position() == (3, 7, 9)
+    s.set_switch(2, True); s.set_variable(3, 9); s.set_gold(99999999); s.set_actor(2, level=9, mp=77, hp=1); s.set_item("items", 4, 7)
+    s.set_position(x=2, y=3)                                      # same map: moves the player directly (real_x is in 1/128 tiles)
+    pl = s._o("Game_Player").ivars
+    assert (pl["@x"], pl["@real_x"], pl["@y"], pl["@real_y"]) == (2, 256, 3, 384) and not pl["@transferring"]
+    s.set_position(map_id=5, x=4, y=6)                            # another map: a reserved transfer, the map id itself stays
+    assert s.position() == (5, 4, 6) and s._o("Game_Map").ivars["@map_id"] == 3 and pl["@transferring"] is True
+    s.save()
+    t = open_save(f)
+    assert t.get_switch(2) and t.get_variable(3) == 9 and t.gold() == 9999999        # XP's gold cap
+    assert (t.actor(2).level, t.actor(2).mp, t.actor(2).hp) == (9, 77, 1) and t.inventory("items")[4] == 7
+    assert t.position() == (5, 4, 6) and t.readonly is None
+    from rpgm_upscaler.saves.database import load_names
+    names = load_names(f)
+    assert names.actors == {1: "アレックス"} and names.items == {1: "ポーション"} and names.currency == "ゴールド"

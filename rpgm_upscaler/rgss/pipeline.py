@@ -22,7 +22,7 @@ class PrepareCancelled(RgssProjectError):
 
 
 # what reading a project's basics (screen, title, tilesets, script list) needs from an archive: two small files
-_BASICS = re.compile(r"^data/(tilesets|scripts)\.rv(data2?)$", re.I)
+_BASICS = re.compile(r"^data/(tilesets|scripts)\.(rvdata2?|rxdata)$", re.I)
 
 
 class Prepared:
@@ -42,8 +42,8 @@ def prepare(game: str | Path, on_progress: Callable[[int, int, str], None] | Non
     """`basics_only` unpacks just the files needed to read the project's settings (analyze, scripts): the images stay
     in the archive. Raises PrepareCancelled if `cancel` is set while unpacking."""
     info = detect_engine(game)
-    if info is None or info.engine not in ("ACE", "VX"):
-        raise RgssProjectError("not a VX / VX Ace project" if info is None else f"{info.label} is not supported for upscaling")
+    if info is None or info.engine not in ("ACE", "VX", "XP"):
+        raise RgssProjectError("not an XP / VX / VX Ace project" if info is None else f"{info.label} is not supported for upscaling")
     tmp = None
     base = None
     if info.archive is not None and not (info.root / "Data").is_dir():

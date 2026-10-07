@@ -17,7 +17,7 @@ from ..rgss.pipeline import PrepareCancelled
 def _plan_for(path: str, opts: Options, mode: str, cancel=None):
     """(plan, prepared) for any supported engine; `prepared` owns a temporary extraction (VX/Ace archives)."""
     info = detect_engine(path)
-    if info is not None and info.engine in ("ACE", "VX"):
+    if info is not None and info.engine in ("ACE", "VX", "XP"):
         from ..rgss import pipeline
         from ..rgss.planner import build_plan as rgss_plan
         prepared = pipeline.prepare(path, cancel=cancel)
@@ -26,8 +26,6 @@ def _plan_for(path: str, opts: Options, mode: str, cancel=None):
         except Exception:
             prepared.cleanup()
             raise
-    if info is not None and info.engine == "XP":
-        raise ValueError("RPG Maker XP is detected but not supported yet.")
     return build_plan(load_project(path), opts), None
 
 

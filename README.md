@@ -1,8 +1,7 @@
 # RPGM Hub
 
 One Linux app for all things RPG Maker: **upscale** a game to 1920×1080, **edit its saves**, and **translate a whole
-Japanese game into English offline** (dialogue, database, system text, plugin text and, optionally, lettering inside images). It covers RPG Maker **MV, MZ, VX Ace and VX** (XP is recognised,
-not supported yet). A GUI and a CLI share the same core.
+Japanese game into English offline** (dialogue, database, system text, plugin text and, optionally, lettering inside images). It covers RPG Maker **MV, MZ, VX Ace, VX and XP**. A GUI and a CLI share the same core.
 
 ```
 ./run.sh                     # creates .venv, installs PySide6/Pillow/numpy, starts the hub
@@ -19,12 +18,13 @@ Optional image translation (OCR): `.venv/bin/pip install -r requirements-ocr.txt
 
 ## What works for which engine
 
-| | MV | MZ | VX Ace | VX |
-|---|---|---|---|---|
-| Upscale to 1080p | yes (patched engine) | yes (patched engine, **untested on a real MZ**) | yes, via an mkxp-z *Hires* pack | yes, via an mkxp-z *Hires* pack |
-| Save editor | yes | yes | yes | yes |
-| Names from the game database | yes | yes | yes | yes |
-| Encrypted games | images decrypted/re-encrypted | same | `.rgss3a` unpacked | `.rgss2a` unpacked |
+| | MV | MZ | VX Ace | VX | XP |
+|---|---|---|---|---|---|
+| Upscale to 1080p | yes (patched engine) | yes (patched engine, checked on one real MZ game) | yes, via an mkxp-z *Hires* pack | yes, via an mkxp-z *Hires* pack | yes, via an mkxp-z *Hires* pack (RGSS1) |
+| Save editor | yes | yes | yes | yes | yes |
+| Translate a whole game | yes | yes (plugin-command text arguments too) | yes (the `Vocab` script too) | yes | yes |
+| Names from the game database | yes | yes | yes | yes | yes |
+| Encrypted games | images decrypted/re-encrypted | same | `.rgss3a` unpacked | `.rgss2a` unpacked | `.rgssad` unpacked |
 
 ### Upscaling MV / MZ
 Writes a separate copy of the game: sprite sheets are resized cell by cell (no colour bleeding), titles and battle

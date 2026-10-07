@@ -204,7 +204,7 @@ class SavesTab(QWidget):
 
     def open_dialog(self) -> None:
         f, _ = QFileDialog.getOpenFileName(self, "Open a save file", self.ctx.path or str(Path.home()),
-                                           "Saves (*.rpgsave *.rmmzsave *.rvdata2 *.rvdata)")
+                                           "Saves (*.rpgsave *.rmmzsave *.rvdata2 *.rvdata *.rxdata)")
         if f:
             self.open_file_async(f)
 

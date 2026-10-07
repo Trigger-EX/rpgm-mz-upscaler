@@ -1,4 +1,4 @@
-"""VX (.rvdata) and VX Ace (.rvdata2) saves: several consecutive Marshal streams, edited in place."""
+"""XP (.rxdata), VX (.rvdata) and VX Ace (.rvdata2) saves: several consecutive Marshal streams, edited in place."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,7 +40,7 @@ class MarshalSave(SaveDoc):
         raw = self.path.read_bytes()
         self._mtime = self.path.stat().st_mtime_ns
         self.streams = m.load_all(raw)
-        self.engine = "ACE" if self.path.suffix == ".rvdata2" else "VX"
+        self.engine = {".rvdata2": "ACE", ".rxdata": "XP"}.get(self.path.suffix, "VX")
         self.readonly = None
         if m.dump_all(self.streams) != raw:
             self.readonly = "re-serialising does not reproduce the original bytes"
@@ -108,7 +108,10 @@ class MarshalSave(SaveDoc):
 
     def party_ids(self) -> list[int]:
         a = _iv(self._o("Game_Party"), "@actors")
-        return [int(x) for x in a] if isinstance(a, list) else []
+        if not isinstance(a, list):
+            return []
+        # VX / Ace keep actor ids here; XP keeps the Game_Actor objects themselves
+        return [int(_iv(x, "@actor_id", 0)) if isinstance(x, m.RObject) else int(x) for x in a]
 
     def _actor_obj(self, actor_id: int):
         d = self._data("Game_Actors")
@@ -124,7 +127,8 @@ class MarshalSave(SaveDoc):
         cid = _iv(a, "@class_id")
         if isinstance(exp, dict):
             exp = exp.get(cid, next(iter(exp.values()), None))
-        return ActorView(actor_id, _text(_iv(a, "@name")), _iv(a, "@level"), exp, _iv(a, "@hp"), _iv(a, "@mp"), cid)
+        mp = _iv(a, "@mp") if "@mp" in a.ivars else _iv(a, "@sp")                 # XP calls magic points SP
+        return ActorView(actor_id, _text(_iv(a, "@name")), _iv(a, "@level"), exp, _iv(a, "@hp"), mp, cid)
 
     def set_actor(self, actor_id: int, **fields) -> None:
         self._touch()
@@ -141,7 +145,8 @@ class MarshalSave(SaveDoc):
                 else:
                     a.ivars["@exp"] = max(0, int(v))
             elif k in ("hp", "mp"):
-                a.ivars["@" + k] = max(0, int(v))
+                key = "@sp" if (k == "mp" and "@mp" not in a.ivars and "@sp" in a.ivars) else "@" + k
+                a.ivars[key] = max(0, int(v))
             elif k == "name":
                 a.ivars["@name"] = m.RString(str(v).encode("utf-8"), {"E": True} if self.engine == "ACE" else {})
             else:
@@ -192,14 +197,17 @@ class MarshalSave(SaveDoc):
             real = pl.ivars.get("@real_" + axis)
             if real is None:
                 continue
-            if getattr(self, "engine", "ACE") == "VX":        # VX: 1/256 tile units
-                pl.ivars["@real_" + axis] = v * 256
+            if getattr(self, "engine", "ACE") in ("VX", "XP"):   # VX: 1/256 tile units, XP: 1/128
+                pl.ivars["@real_" + axis] = v * (128 if self.engine == "XP" else 256)
             elif isinstance(real, float):                     # Ace: tiles; a standing player may hold an Integer, a moving one a Float
                 pl.ivars["@real_" + axis] = m.RFloat(float(v))
             else:
                 pl.ivars["@real_" + axis] = v
 
     def playtime(self):
+        if self.engine == "XP" and len(self.streams) > 1 and isinstance(self.streams[1], int):
+            sec = self.streams[1] // 40                                  # Graphics.frame_count at RGSS1's 40 fps
+            return f"{sec // 3600:02d}:{sec // 60 % 60:02d}:{sec % 60:02d}"
         if self.header is not None:
             for k, v in self.header.items():
                 if str(k) == "playtime_s" and isinstance(v, int):

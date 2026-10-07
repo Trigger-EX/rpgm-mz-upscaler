@@ -213,6 +213,18 @@ def test_image_overlay_with_fake_backend(tmp_path, tr):
     # a second run on the same output skips images that were already handled
     res3 = gamerun.translate_game(g, tmp_path / "out2", tr, gamerun.Options(ocr=True, overwrite=True), ocr_backend=FakeOcr())
     assert res3.images_changed >= 1                                       # mirrored fresh copy: scanned again
+    translated = Image.open(tmp_path / "out2/img/pictures/Menu.png").convert("RGB").tobytes()
+    # resuming keeps the overlaid image and does not scan it again
+    res4 = gamerun.translate_game(g, tmp_path / "out2", tr, gamerun.Options(ocr=True, resume=True), ocr_backend=FakeOcr())
+    assert res4.images_scanned == 0 and res4.images_changed == 0
+    assert Image.open(tmp_path / "out2/img/pictures/Menu.png").convert("RGB").tobytes() == translated
+    # a changed source image is picked up again
+    src_img = g / "img/pictures/Menu.png"
+    Image.new("RGBA", (200, 80), (200, 30, 60, 255)).save(src_img)
+    import os, time
+    os.utime(src_img, (time.time() + 5, time.time() + 5))
+    res5 = gamerun.translate_game(g, tmp_path / "out2", tr, gamerun.Options(ocr=True, resume=True), ocr_backend=FakeOcr())
+    assert res5.images_scanned >= 1
 
 
 need_tess = pytest.mark.skipif(not ocr.ocr_available(("jpn",))[0] or ocr.find_font() is None, reason="needs tesseract+jpn and OpenCV")
@@ -415,3 +427,60 @@ def test_non_ascii_game_and_output_paths(tmp_path, tr):
     assert res.files_changed >= 1 and (out / ".translation/report.tsv").is_file()
     assert "Arekkusu" in (out / "data/Actors.json").read_text(encoding="utf-8")
     assert "アレックス" in (g / "data/Actors.json").read_text(encoding="utf-8")        # the original is untouched
+
+
+def test_mz_plugin_command_text_arguments_are_translated_but_not_files_or_numbers(tmp_path, tr):
+    g = mv_game(tmp_path, "MZ")
+    plug = [cmd(357, ["Fancy", "show", "Show it", {"text": "こんにちは", "picture": "冒険", "title": "村", "count": "5", "Label2": "はい"}]),
+            cmd(0, [])]
+    write(g / "data/CommonEvents.json", [None, {"id": 1, "name": "x", "list": plug}])
+    run(g, tmp_path / "out", tr)
+    args = json.loads((tmp_path / "out/data/CommonEvents.json").read_text(encoding="utf-8"))[1]["list"][0]["parameters"][3]
+    assert args["text"] != "こんにちは" and args["title"] == "Village" and args["Label2"] == "Yes"
+    assert args["picture"] == "冒険" and args["count"] == "5"                       # only plainly-textual keys are touched
+
+
+def test_ace_vocab_script_strings_are_translated_in_the_scripts_file(tmp_path, tr):
+    import zlib
+    from rpgm_upscaler.rgss import scripts as sc
+    g = make_ace(tmp_path / "ace", ace=True)
+    vocab = ('module Vocab\n  # 戦闘メッセージ\n  Victory = "魔王が現れた！"   # コメント\n  Level = \'村\'\n  Escape = "逃げた"\n'
+             '  Plain = "ok"\nend\n')
+    arr = sc.load((g / "Data/Scripts.rvdata2").read_bytes())
+    sc.insert_before_main(arr, "Vocab", vocab)
+    (g / "Data/Scripts.rvdata2").write_bytes(m.dumps(arr))
+    res = run(g, tmp_path / "out", tr)
+    out = sc.load((tmp_path / "out/Data/Scripts.rvdata2").read_bytes())
+    src = next(sc.source(e) for e in out if sc._title(e) == "Vocab")
+    assert 'Victory = "The Demon King appeared!"   # コメント' in src and "Level = 'Village'" in src      # comments untouched
+    assert 'Plain = "ok"' in src and 'Escape = "EN(逃げた)"' in src and src.startswith("module Vocab")      # EN(...) = the fake model's answer
+    assert not any(r["source"].startswith("kept") for r in res.rows)
+    again = sc.load((g / "Data/Scripts.rvdata2").read_bytes())                                       # the source game is unchanged
+    assert "魔王が現れた" in next(sc.source(e) for e in again if sc._title(e) == "Vocab")
+
+
+def test_printf_fill_ins_are_protected_like_control_codes(tr):
+    from rpgm_upscaler.translate.detect import protect, restore
+    t, codes = protect("%sは%1$s%dの経験値を獲得！")
+    assert codes == ["%s", "%1$s", "%d"] and "%" not in t and restore(t, codes) == "%sは%1$s%dの経験値を獲得！"
+
+
+def test_xp_game_translation_handles_101_with_the_first_line_inside(tmp_path, tr):
+    from tests.fakeace import make_xp
+    g = make_xp(tmp_path / "xp", archive=True)
+    res = run(g, tmp_path / "out", tr)
+    assert res.engine == "XP" and res.translated >= 8
+    lst = m.loads((tmp_path / "out/Data/Map001.rxdata").read_bytes()).ivars["@events"][1].ivars["@pages"][0].ivars["@list"]
+    codes = [(c.ivars["@code"], [getattr(p, "text", p) for p in c.ivars["@parameters"]]) for c in lst]
+    # block 1: the speaker label (the actor's name, romanised like the database entry) in the 101 command, the sentence in a 401
+    assert codes[0] == (101, ["Arekkusu"]) and codes[1] == (401, ["Nice weather today, isn't it?"])
+    # block 2: no speaker, so the whole text sits in the 101 command itself, and the next window starts with a new 101
+    assert codes[2][0] == 101 and codes[2][1][0].startswith("Hello") or codes[2][1][0].startswith("EN(")
+    assert codes[3] == (401, ["Nice weather today, isn't it?"]) or codes[3][0] == 401
+    choices = next(c for c in lst if c.ivars["@code"] == 102).ivars["@parameters"]
+    assert [x.text for x in choices[0]] == ["Yes", "No"] and choices[1] == 2
+    sysd = m.loads((tmp_path / "out/Data/System.rxdata").read_bytes())
+    words = sysd.ivars["@words"].ivars
+    assert words["@gold"].text != "ゴールド" and words["@equip"].text.isascii()
+    assert m.loads((tmp_path / "out/Data/Items.rxdata").read_bytes())[1].ivars["@name"].text == "Potion"
+    assert (tmp_path / "out/Data/Scripts.rxdata").is_file()                                           # archive was unpacked into the copy
