@@ -273,6 +273,8 @@ def translate_game(src: str | Path, out: str | Path, translator, opts: Options |
                 res.warnings.append(f"plugins.js: skipped ({e})")
 
     # 3. translate
+    if hasattr(translator, "set_terms"):
+        translator.set_terms({})
     if opts.memory:
         translator.overrides.update(_load_memory(opts.memory))
     literals = _script_literals(info, out, loaded) if opts.keep_referenced else set()
@@ -300,6 +302,8 @@ def translate_game(src: str | Path, out: str | Path, translator, opts: Options |
                 res.translated += 1
             res.rows.append({"kind": u.kind, "where": u.where, "ja": u.ja, "en": r.text if r.translated else "", "source": r.source})
         base += len(units)
+        if romaji and hasattr(translator, "set_terms"):      # character names are now fixed: dialogue must reuse them verbatim
+            translator.set_terms({u.ja: u.en for u in units if u.en and u.ja in col.known_names})
     st = translator.status() if hasattr(translator, "status") else {}
     if st.get("model") != "ready" and res.untranslated:
         res.warnings.append("No translation model is installed, so only text the built-in dictionary covers was translated. "

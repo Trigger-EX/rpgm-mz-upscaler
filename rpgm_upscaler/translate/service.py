@@ -12,7 +12,7 @@ from typing import Callable
 from . import argos, nllb
 from .cache import Cache
 from .detect import codes_intact, soften_punct, squash_repeats, is_japanese, normalize, protect, restore, split_sentences
-from .glossary import Glossary
+from .glossary import Glossary, kana_only, romanize
 
 
 @dataclass
@@ -34,7 +34,29 @@ def cache_path() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "rpgm-upscaler" / "translate.sqlite"
 
 
-PIPELINE = "+p5"      # bump when protection/splitting rules change so stale cached results are not reused
+PIPELINE = "+p6"      # bump when protection/splitting rules change so stale cached results are not reused
+
+
+_HIRA_ONLY = re.compile("[\u3041-\u309f]+")
+_KATA_ONLY = re.compile("[\u30a1-\u30fc]+")
+_KATA = re.compile("[\u30a1-\u30fc]")
+
+
+def hash_text(s: str) -> int:
+    import zlib
+    return zlib.crc32(s.encode("utf-8"))
+
+
+def _is_term_code(c: str) -> bool:
+    """A protected entry that is an English name rather than a control code (those start with a backslash or %)."""
+    return not c.startswith(("\\", "%"))
+
+
+def _sound_effect(text: str) -> bool:
+    core = re.sub(r"[…・~～!?！？.。、\s]|\\[A-Za-z]+(\[[^\]]*\])?", "", normalize(text))
+    if not core or len(core) > 4 or not kana_only(core):
+        return False
+    return bool(_KATA_ONLY.fullmatch(core)) or core[-1] in "ゃゅょっぁぃぅぇぉー" or bool(re.search(r"[…~～ー]$", text.strip()))
 
 
 class Translator:
@@ -51,6 +73,7 @@ class Translator:
                 pass
         self.cache = cache if cache is not None else Cache(cache_path())
         self.overrides: dict[str, str] = {}
+        self.terms: dict[str, str] = {}               # game-specific names (ja -> en) that dialogue must reuse verbatim
         self._load_overrides()
         self._backend = backend
         self._secondary = None
@@ -117,6 +140,37 @@ class Translator:
                 "models": {"nllb": bool(n), "argos": bool(a)}, "active": getattr(injected, "name", None) or ("nllb" if n else "argos" if a else None),
                 "error": self._backend_error, "glossary_size": len(self.glossary), "overrides": len(self.overrides)}
 
+    # ---- game terms (character names): translated once, then kept identical wherever they occur in running text
+    def set_terms(self, terms: dict[str, str]) -> None:
+        """Names too short or too common in kana to be told apart from ordinary words are left out: hiragana-only names, and
+        anything under two characters."""
+        self.terms = {normalize(ja): en for ja, en in terms.items()
+                      if en and en != ja and len(normalize(ja)) >= 2 and not _HIRA_ONLY.fullmatch(normalize(ja))}
+
+    def _term_spans(self, text: str) -> list[tuple[int, int, str]]:
+        spans: list[tuple[int, int, str]] = []
+        taken = [False] * len(text)
+        for ja in sorted(self.terms, key=len, reverse=True):
+            kata = bool(_KATA_ONLY.fullmatch(ja))
+            start = text.find(ja)
+            while start != -1:
+                end = start + len(ja)
+                free = not any(taken[start:end])
+                edge = not kata or ((start == 0 or not _KATA.match(text[start - 1])) and (end == len(text) or not _KATA.match(text[end])))
+                if free and edge:
+                    spans.append((start, end, ja))
+                    for k in range(start, end):
+                        taken[k] = True
+                start = text.find(ja, end)
+        return sorted(spans)
+
+    def _terms_sig(self, text: str) -> str:
+        """Cache suffix naming the terms a text contains, so a result is only reused with the same names."""
+        used = self._term_spans(normalize(text)) if self.terms else []
+        if not used:
+            return ""
+        return "+t" + format(hash_text("|".join(sorted({f"{ja}>{self.terms[ja]}" for _, _, ja in used}))), "x")
+
     # ---- translation
     def _local(self, text: str, romaji: bool = True) -> Result | None:
         """Overrides and glossary only: instant, no model."""
@@ -125,6 +179,9 @@ class Translator:
         en, conf = self.glossary.translate(text, romaji)
         if en is not None and conf >= 0.5:
             return Result(en, "glossary", conf)
+        if not romaji and _sound_effect(text):         # "むにゃ", "ゴゴゴ": a model invents words for these
+            core, tail = re.match(r"(.*?)([…~～!?！？.。、\s]*)$", normalize(text), re.S).groups()
+            return Result((romanize(core).capitalize() + tail.replace("。", ".").replace("、", ",")).strip(), "glossary", 0.5)
         return None
 
     def translate(self, text: str) -> Result:
@@ -155,7 +212,7 @@ class Translator:
             tag = backend.tag + PIPELINE
             fresh: list[str] = []
             for t in todo:
-                hit = self.cache.get(t, tag)
+                hit = self.cache.get(t, tag + self._terms_sig(t))
                 if hit is not None:
                     for i in pending[t]:
                         out[i] = Result(hit, "cache", 0.6)
@@ -182,7 +239,7 @@ class Translator:
                             en, who = alt, self._secondary.name
                     if not self._usable(en, t):
                         continue
-                    self.cache.put(t, tag, en)
+                    self.cache.put(t, tag + self._terms_sig(t), en)
                     for i in pending[t]:
                         out[i] = Result(en, who, 0.6)
                     done += len(pending[t])
@@ -207,21 +264,33 @@ class Translator:
             return False
         return any(c.isascii() and c.isalpha() for c in en)
 
-    @staticmethod
-    def _prepare(text: str) -> tuple[list[str], str, list[str]]:
+    def _protect_all(self, text: str) -> tuple[str, list[str]]:
+        """Control codes and known names become placeholders the model copies through; the codes list holds what goes back."""
         protected, codes = protect(normalize(text))
+        spans = self._term_spans(protected) if self.terms else []
+        for a, b, ja in reversed(spans):
+            codes.append(self.terms[ja])
+            protected = f"{protected[:a]}[[{len(codes) - 1}]]{protected[b:]}"
+        if spans:                                      # indices must run in reading order
+            order = [int(x) for x in re.findall(r"\[\[(\d+)\]\]", protected)]
+            remap = {old: new for new, old in enumerate(order)}
+            protected = re.sub(r"\[\[(\d+)\]\]", lambda mt: f"[[{remap[int(mt.group(1))]}]]", protected)
+            codes = [codes[o] for o in order]
+        return protected, codes
+
+    def _prepare(self, text: str) -> tuple[list[str], str, list[str]]:
+        protected, codes = self._protect_all(text)
         protected = soften_punct(protected)
         return codes, protected, split_sentences(protected) or [protected]
 
     _NAMES = ["Aldric", "Bryn", "Calyx", "Dorian", "Elowen", "Fenwick", "Garrick", "Hollis"]
 
-    @classmethod
-    def _retry_without_codes(cls, backend, text: str, codes: list[str]) -> str:
+    def _retry_without_codes(self, backend, text: str, codes: list[str]) -> str:
         """The model dropped or invented a placeholder. Retry with name codes (\\N[1]) and number codes (\\V[1]) replaced by
         a name-like / number-like stand-in that models copy through, then swapped back. Formatting codes that started or ended
         the text (colour switches, picture codes) are put back at the edges; any other code is dropped rather than guessed."""
-        protected, found = protect(normalize(text))
-        content = lambda i: bool(re.fullmatch(r"\\[NnPpVv]\[\d+\]|%\d", found[i]))      # noqa: E731  (filled in by the engine)
+        protected, found = self._protect_all(text)
+        content = lambda i: bool(re.fullmatch(r"\\[NnPpVv]\[\d+\]|%\d", found[i])) or _is_term_code(found[i])      # noqa: E731  (filled in by the engine)
         ph = re.compile(r"\[\[(\d+)\]\]\s*")
         lead = ""
         pos = 0
@@ -239,8 +308,8 @@ class Translator:
         def sub(mt):
             i = int(mt.group(1))
             c = found[i]
-            if re.fullmatch(r"\\[NnPp]\[\d+\]|%\d", c):          # actor/skill names filled in by the engine: %1 %2
-                tok = cls._NAMES[len(tokens) % len(cls._NAMES)]
+            if re.fullmatch(r"\\[NnPp]\[\d+\]|%\d", c) or _is_term_code(c):          # actor/skill names filled in by the engine: %1 %2
+                tok = self._NAMES[len(tokens) % len(self._NAMES)]
             elif re.fullmatch(r"\\[Vv]\[\d+\]", c):
                 tok = str(7000 + 13 * len(tokens))
             else:

@@ -358,3 +358,36 @@ def test_short_ocr_readings_must_occur_in_the_game_text(tmp_path, tr):
     res = gamerun.translate_game(g, tmp_path / "out", tr, gamerun.Options(ocr=True), ocr_backend=TwoShort())
     imgs = [r["ja"] for r in res.rows if r["kind"] == "image"]
     assert "アレックス" in imgs and "ソフ" not in imgs
+
+
+def test_character_names_are_reused_verbatim_in_dialogue(tmp_path, tr):
+    seen = []
+    tr._backend.translate_batch = lambda texts: (seen.extend(texts), [f"EN({t})" for t in texts])[1]
+    g = make_game(tmp_path / "g", "MV")
+    write(g / "data/Actors.json", [None, {"id": 1, "name": "アレックス", "nickname": "", "profile": ""}])
+    msg = [cmd(101, ["", 0, 0, 2]), cmd(401, ["アレックスは剣を取った。"]), cmd(0, [])]
+    write(g / "data/Map003.json", {"displayName": "", "events": [None, {"id": 1, "pages": [{"list": msg}]}]})
+    run(g, tmp_path / "out", tr)
+    lst = json.loads((tmp_path / "out/data/Map003.json").read_text(encoding="utf-8"))["events"][1]["pages"][0]["list"]
+    en = [c["parameters"][0] for c in lst if c["code"] == 401][0]
+    actor = json.loads((tmp_path / "out/data/Actors.json").read_text(encoding="utf-8"))[1]["name"]
+    assert "[[0]]" in seen[0] and "アレックス" not in seen[0]       # the model sees a placeholder, not the Japanese name
+    assert actor in en and "[[" not in en
+
+
+def test_terms_keep_hiragana_names_and_katakana_words_apart(tr):
+    tr.set_terms({"ミア": "Mia", "みお": "Mio", "x": "X"})
+    assert set(tr.terms) == {"ミア"}                                  # hiragana-only and one-character names are not safe to swap
+    assert [ja for _, _, ja in tr._term_spans("ミアは笑った")] == ["ミア"]
+    assert tr._term_spans("ミアンの店") == []                          # inside a longer katakana word
+    assert tr._terms_sig("ミアは笑った") != tr._terms_sig("ふつうの文")
+    tr.set_terms({"ミア": "Mya"})
+    assert tr._terms_sig("ミアは笑った") != ""
+
+
+def test_sound_effects_are_transliterated_not_invented(tr):
+    called = []
+    tr._backend.translate_batch = lambda texts: (called.extend(texts), ["Something invented"] * len(texts))[1]
+    r = tr.translate_many(["むにゃ…", "ゴゴゴ", "今日はいい天気ですね。"], romaji=False)
+    assert r[0].text.lower().startswith("munya") and r[1].text.lower() == "gogogo"
+    assert called == ["今日はいい天気ですね。"]
