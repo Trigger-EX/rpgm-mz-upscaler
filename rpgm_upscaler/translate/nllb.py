@@ -6,6 +6,7 @@ Runs on ctranslate2 + sentencepiece only, like the Argos backend.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -14,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from .argos import ArgosError, data_dir, deps_available, download
+from .argos import ArgosError, data_dir, deps_available, download, open_url
 
 REPO = "JustFrederik/nllb-200-distilled-600M-ct2-int8"
 BASE_URL = f"https://huggingface.co/{REPO}/resolve/main"
@@ -29,6 +30,25 @@ def model_dir() -> Path:
 def find_installed() -> Path | None:
     d = model_dir()
     return d if all((d / f).is_file() for f in FILES) else None
+
+
+def fetch_entry(repo: str = REPO, api: str = "https://huggingface.co/api/models") -> dict:
+    """Ask the model hub which files the newest revision holds: {"name", "version", "url", "size", "files"}. Downloads nothing."""
+    try:
+        with open_url(f"{api}/{repo}/tree/main") as r:
+            tree = json.load(r)
+        with open_url(f"{api}/{repo}") as r:
+            info = json.load(r)
+    except (OSError, ValueError) as e:
+        raise ArgosError(f"could not reach the model hub: {e}") from e
+    sizes = {t.get("path"): int(t.get("size") or 0) for t in tree if t.get("type") == "file"}
+    missing = [f for f in FILES if f not in sizes]
+    if missing:
+        raise ArgosError(f"the model repository no longer has the expected files: {', '.join(missing)}")
+    files = {f: sizes[f] for f in FILES}
+    version = str(info.get("lastModified", "?"))[:10]
+    return {"name": "NLLB-200 600M", "version": version, "url": f"https://huggingface.co/{repo}/resolve/main",
+            "size": sum(files.values()), "files": files}
 
 
 def install(progress: Callable[[int, int], None] | None = None, cancel: threading.Event | None = None,

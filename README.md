@@ -12,7 +12,7 @@ Single-file builds (Linux): `tools/build_bundle.sh` makes `dist/rpgm-hub/` with 
 `--with-ocr` for the optional parts; they make it much bigger), and `tools/build_appimage.sh` wraps it into
 `RPGM_Hub-x86_64.AppImage`. `rpgm-hub GAME` opens the window, `rpgm-hub analyze|plan|run|translate-game|... ARGS` is the CLI.
 
-Optional neural translation: click *Translation → Install Python packages* (the hub creates its own virtual environment under `~/.local/share/rpgm-upscaler/venv` if the system Python refuses pip, as on Linux Mint; on Debian/Ubuntu this needs `python3-venv`), or run `.venv/bin/pip install -r requirements-translate.txt`. Then *Translation → Install model*.
+Optional neural translation (pick NLLB or Argos in the dropdown, *Fetch latest* shows the newest download link): click *Translation → Install Python packages* (the hub creates its own virtual environment under `~/.local/share/rpgm-upscaler/venv` if the system Python refuses pip, as on Linux Mint; on Debian/Ubuntu this needs `python3-venv`), or run `.venv/bin/pip install -r requirements-translate.txt`. Then *Translation → Install model*.
 Optional image translation (OCR): `.venv/bin/pip install -r requirements-ocr.txt` and install Tesseract with its Japanese data
 (`apt install tesseract-ocr tesseract-ocr-jpn tesseract-ocr-jpn-vert`).
 

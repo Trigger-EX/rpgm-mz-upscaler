@@ -293,3 +293,43 @@ def test_pyenv_reports_failed_venv(monkeypatch, tmp_path):
     monkeypatch.setattr(pyenv, "_run", lambda *a: 1)
     with pytest.raises(pyenv.EnvError, match="python3-venv"):
         pyenv.install_packages(["x"])
+
+
+# ---- fetching the newest download links -----------------------------------------------------------------------
+def test_requests_send_a_browser_like_user_agent(tmp_path):
+    """urllib's default agent is answered with 403 by the model host."""
+    seen = []
+
+    class H(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.headers.get("User-Agent", ""))
+            self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"ok")
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        argos.download(f"http://127.0.0.1:{srv.server_address[1]}/m", tmp_path / "m")
+    finally:
+        srv.shutdown()
+    assert seen and "Python-urllib" not in seen[0]
+
+
+def test_fetch_entries(monkeypatch):
+    from rpgm_upscaler.translate import nllb
+    idx = [{"from_code": "ja", "to_code": "en", "package_version": "1.0", "links": ["https://x/old.argosmodel"]},
+           {"from_code": "ja", "to_code": "en", "package_version": "1.2", "links": ["ipfs://z", "https://x/new.argosmodel"]}]
+    monkeypatch.setattr(argos, "open_url", lambda url, timeout=30: io.BytesIO(json.dumps(idx).encode()))
+    e = argos.fetch_entry()
+    assert e["version"] == "1.2" and e["url"] == "https://x/new.argosmodel"
+
+    tree = [{"type": "file", "path": n, "size": s} for n, s in nllb.FILES.items()]
+    info = {"lastModified": "2023-05-14T21:51:27.000Z"}
+    monkeypatch.setattr(nllb, "open_url", lambda url, timeout=30: io.BytesIO(json.dumps(tree if "/tree/" in url else info).encode()))
+    e = nllb.fetch_entry()
+    assert e["version"] == "2023-05-14" and e["files"] == nllb.FILES and e["url"].endswith("/resolve/main")
+    tree.pop()
+    with pytest.raises(argos.ArgosError, match="expected files"):
+        nllb.fetch_entry()
