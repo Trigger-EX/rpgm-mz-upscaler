@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
@@ -16,11 +16,14 @@ _STAGES = {"copy": "Copying the game", "scan": "Reading game data", "translate":
 
 
 class GameTranslateTab(QWidget):
+    output_ready = Signal(str)             # folder of a finished translation
+
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self.ctx = ctx
         self._worker: GameTranslateWorker | None = None
         self._out_dir: Path | None = None
+        self._last_root = ""
         v = QVBoxLayout(self)
         self.game_label = QLabel("Open a game on the Project page first."); self.game_label.setTextFormat(Qt.PlainText)
         self.game_label.setWordWrap(True)
@@ -133,8 +136,11 @@ class GameTranslateTab(QWidget):
             self.start_btn.setEnabled(False)
             return
         self.game_label.setText(f"Game: {info.label}  —  {info.root}")
-        if not self.out_edit.text():
-            self.out_edit.setText(str(Path(info.root).parent / (Path(info.root).name + "_EN")))
+        root = str(info.root)
+        own_result = self._out_dir is not None and Path(root) == Path(self._out_dir)
+        if not own_result and (not self.out_edit.text() or root != self._last_root):   # a new game gets its own suggested output
+            self.out_edit.setText(str(Path(root).parent / (Path(root).name + "_EN")))
+        self._last_root = root
         self.start_btn.setEnabled(self._worker is None)
         self.refresh_model()
 
@@ -238,6 +244,8 @@ class GameTranslateTab(QWidget):
         self.result.setPlainText("\n".join(lines))
         self.open_btn.setEnabled(not res.cancelled and res.out is not None)
         self.ctx.log.emit("info", lines[0])
+        if not res.cancelled and res.out is not None:
+            self.output_ready.emit(str(res.out))
 
     def _on_failed(self, msg: str) -> None:
         self.result.setPlainText(f"Failed: {msg}")

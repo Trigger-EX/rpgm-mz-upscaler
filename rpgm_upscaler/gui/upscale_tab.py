@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QMainWindow,
@@ -45,6 +45,8 @@ def pil_to_pixmap(img: Image.Image, max_side: int = 520, dpr: float | None = Non
 
 
 class UpscaleTab(QWidget):
+    output_ready = Signal(str)             # folder of a finished run
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._prepared = None          # temp extraction of an encrypted VX/Ace game, kept for previews
@@ -396,6 +398,9 @@ class UpscaleTab(QWidget):
         for name, err in res.failed:
             self._append_log("error", f"{name}: {err}")
         self.progress_lbl.setText(msg)
+        out = self.out_edit.text().strip()
+        if out and not res.cancelled and res.ok + res.skipped > 0:
+            self.output_ready.emit(out)
 
     def _run_failed(self, msg: str) -> None:
         self.worker = None

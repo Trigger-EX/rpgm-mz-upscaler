@@ -298,3 +298,24 @@ def test_opening_a_save_with_unsaved_edits_asks_once(hub, tmp_path, dialogs):
     hub.open_save_file(str(second))
     assert [d[0] for d in dialogs].count("question") == 1 and hub.saves.doc.path.name == "file2.rpgsave"
     hub.saves.wait_for_translation()
+
+
+def test_finished_runs_make_their_output_the_open_game(hub, tmp_path):
+    from types import SimpleNamespace
+    g = make_game(tmp_path / "g", "MZ")
+    up_out = make_game(tmp_path / "g_1080p", "MZ")
+    tr_out = make_game(tmp_path / "g_1080p_EN", "MZ")
+    hub.open_project(str(g))
+    assert hub.game_translate.out_edit.text().endswith("g_EN")
+    hub.upscale.out_edit.setText(str(up_out))
+    hub.upscale._run_done(SimpleNamespace(ok=3, skipped=0, failed=[], cancelled=False))
+    assert str(hub.ctx.info.root) == str(up_out) and hub.project_page.edit.text() == str(up_out)
+    assert hub.game_translate.out_edit.text().endswith("g_1080p_EN")
+    assert hub.upscale.src_edit.text() == str(g)                       # the upscale page does not chase its own output
+    hub.upscale._run_done(SimpleNamespace(ok=0, skipped=0, failed=[], cancelled=True))
+    assert str(hub.ctx.info.root) == str(up_out)                       # a cancelled run changes nothing
+    hub.game_translate._out_dir = tr_out
+    hub.game_translate.output_ready.emit(str(tr_out))
+    assert str(hub.ctx.info.root) == str(tr_out)
+    assert hub.upscale.src_edit.text() == str(tr_out)
+    assert hub.game_translate.out_edit.text().endswith("g_1080p_EN")   # not g_1080p_EN_EN

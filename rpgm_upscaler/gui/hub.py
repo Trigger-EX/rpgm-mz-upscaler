@@ -140,6 +140,8 @@ class HubWindow(QMainWindow):
         for w in (self.project_page, self.upscale, self.saves, self.game_translate, self.translation, self.setup, self.log_box):
             self.stack.addWidget(w)
         self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.upscale.output_ready.connect(lambda out: self.follow_output(out, True))
+        self.game_translate.output_ready.connect(lambda out: self.follow_output(out, False))
         self.sidebar.setCurrentRow(0)
         self.ctx.log.connect(lambda lvl, msg: self.log_box.appendPlainText(("[!] " if lvl in ("error", "warning") else "") + msg))
         for edit in self.findChildren(QLineEdit):          # a line edit would swallow a dropped path as text
@@ -152,13 +154,25 @@ class HubWindow(QMainWindow):
     def show_page(self, name: str) -> None:
         self.sidebar.setCurrentRow(PAGES.index(name))
 
-    def open_project(self, path: str) -> EngineInfo | None:
+    def follow_output(self, out: str, from_upscale: bool) -> None:
+        """A tab finished a run: make its output folder the open game, so the next step works on it without a manual switch."""
+        if self.saves.doc is not None and self.saves.doc.dirty:
+            self.ctx.log.emit("warning", f"not switching to {out}: the Saves page has unsaved edits")
+            return
+        if detect_engine(out) is None:
+            self.ctx.log.emit("warning", f"{out} is not recognised as a game folder; staying on the current game")
+            return
+        self.open_project(out, update_upscale=not from_upscale)
+        self.ctx.log.emit("info", f"now working on {out}")
+
+    def open_project(self, path: str, update_upscale: bool = True) -> EngineInfo | None:
         info = self.ctx.set_project(path)
         self.project_page.edit.setText(path)
         self.project_page.show_info(info, path)
         if info is not None:
             self.ctx.log.emit("info", f"opened {info.label}: {info.root}")
-            self.upscale.set_project(str(info.root))
+            if update_upscale:
+                self.upscale.set_project(str(info.root))
         return info
 
     def open_save_file(self, path: str) -> None:
