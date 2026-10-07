@@ -25,6 +25,7 @@ class Options:
     anchor: str = "center"
     workers: int = 0
     resume: bool = True
+    orig: tuple[int, int] | None = None   # the resolution the game was authored for, when it cannot be detected
 
     def digest(self, n: float) -> str:
         d = asdict(self)
@@ -38,7 +39,7 @@ class Options:
         o = Options()
         for k, v in d.items():
             if hasattr(o, k):
-                setattr(o, k, tuple(v) if k == "target" else v)
+                setattr(o, k, tuple(v) if k in ("target", "orig") and v else v)
         return o
 
 

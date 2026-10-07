@@ -508,3 +508,60 @@ def test_an_image_that_always_kills_its_worker_fails_alone(tmp_path, monkeypatch
     assert [f[0] for f in res.failed] == ["img/system/IconSet.png"]
     assert res.ok == len([j for j in plan.jobs if not j.keep_source]) - 1
     assert (tmp_path / "out/img/system/IconSet.png").exists()                # the original is kept
+
+
+def test_png_size_is_read_from_the_header_even_when_encrypted():
+    png = Path(__file__).parent / "_x.png"
+    Image.new("RGBA", (37, 21), (1, 2, 3, 4)).save(png)
+    data = png.read_bytes(); png.unlink()
+    enc = crypto.encrypt(data, KEY)
+    assert crypto.png_size_from_head(data[:40]) == (37, 21)
+    assert crypto.png_size_from_head(enc[:40], None, True) == (37, 21)               # no key needed for the size
+    assert crypto.png_size_from_head(enc[:40], KEY, True) == (37, 21)
+    assert crypto.png_size_from_head(enc[:40], bytes(16), True) is None        # a wrong key is told apart
+    assert crypto.png_size_from_head(enc[:20], KEY, True) is None and crypto.png_size_from_head(b"nope" * 10) is None
+    assert crypto.key_decrypts(enc[:32], KEY) and not crypto.key_decrypts(enc[:32], bytes(16))
+
+
+def test_a_wrong_key_in_system_json_is_replaced_by_the_recovered_one(tmp_path):
+    g = make_game(tmp_path / "g", "MZ", encrypted=True)
+    sysf = g / "data/System.json"
+    d = json.loads(sysf.read_text()); d["encryptionKey"] = "00" * 16; sysf.write_text(json.dumps(d))
+    p = load_project(g)
+    assert p.key == KEY and any("does not decrypt" in w for w in p.warnings)
+    plan = build_plan(p, Options(movies=False))
+    assert plan.jobs and not any("unreadable" in w for w in plan.warnings)
+
+
+def test_texture_slots_follow_the_biggest_tileset_not_a_fixed_768(tmp_path):
+    from rpgm_upscaler.core.patcher import render_plugin, tex_multiplier
+    assert tex_multiplier(1.5) == 2 and tex_multiplier(1.5, 1536) == 3 and tex_multiplier(1.5, 100) == 2
+    g = make_game(tmp_path / "g", "MV")
+    Image.new("RGBA", (1536, 1536), (9, 9, 9, 255)).save(g / "img/tilesets/Huge_B.png")
+    plan = build_plan(load_project(g), Options(movies=False, scale="1.5"))
+    assert plan.tileset_side == 1536
+    assert f'"texMult": {tex_multiplier(plan.scale.n, 1536)}' in render_plugin(plan, "lanczos")
+    assert tex_multiplier(plan.scale.n, 1536) > tex_multiplier(plan.scale.n)
+
+
+def test_orig_option_overrides_the_detected_resolution(tmp_path):
+    g = make_game(tmp_path / "g", "MV")
+    base = build_plan(load_project(g), Options(movies=False))
+    plan = build_plan(load_project(g), Options(movies=False, orig=(1280, 720)))
+    assert plan.scale.orig == (1280, 720) and plan.scale.n == 1.5 and base.scale.orig != (1280, 720)
+    assert cli_main(["plan", str(g), "--orig", "1280x720", "--json"]) == 0
+    assert Options.from_dict({"orig": [1280, 720]}).orig == (1280, 720)
+
+
+def test_mv_outline_is_four_pixels_wide_and_mz_three():
+    from importlib import resources
+    t = resources.files("rpgm_upscaler.core").joinpath("templates/UpscalerPatch.js.tmpl").read_text(encoding="utf-8")
+    assert "R(isMZ ? 3 : 4)" in t
+
+
+def test_plain_images_decrypts_encrypted_files_outside_the_known_folders(tmp_path):
+    g = make_game(tmp_path / "g", "MZ", encrypted=True)
+    (g / "js" / "extra.png_").write_bytes((g / "img/system/IconSet.png_").read_bytes())
+    plan = build_plan(load_project(g), Options(movies=False, reencrypt=False))
+    extra = [j for j in plan.jobs if j.src.endswith("extra.png_")]
+    assert len(extra) == 1 and extra[0].passthrough and extra[0].dst.endswith("extra.png")

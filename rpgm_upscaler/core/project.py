@@ -162,15 +162,26 @@ def load_project(path: str | Path) -> Project:
         except Exception as exc:  # noqa: BLE001
             p.warnings.append(f"Could not parse js/plugins.js: {exc}")
 
-    if p.has_encrypted_images and p.key is None:
+    if p.has_encrypted_images:
+        head = b""
         for f in (web / "img").rglob("*"):
             if f.suffix.lower() in crypto.ENCRYPTED_IMAGE_EXTS:
                 try:
-                    p.key = crypto.recover_key(f.read_bytes())
-                    p.warnings.append("Encryption key recovered from an image (not found in System.json).")
-                except crypto.CryptoError:
-                    pass
+                    with open(f, "rb") as fh:
+                        head = fh.read(32)
+                except OSError:
+                    continue
                 break
+        if head:
+            try:
+                if p.key is None:
+                    p.key = crypto.recover_key(head)
+                    p.warnings.append("Encryption key recovered from an image (not found in System.json).")
+                elif not crypto.key_decrypts(head, p.key):          # a stale or edited key in System.json must not win
+                    p.key = crypto.recover_key(head)
+                    p.warnings.append("The encryptionKey in System.json does not decrypt the images; using the key recovered from an image.")
+            except crypto.CryptoError:
+                pass
     if any(base.glob("package.nw")) or any(base.glob("*.nw")):
         p.warnings.append("A packaged archive (.nw) was found next to the project; make sure you selected the extracted game.")
     return p

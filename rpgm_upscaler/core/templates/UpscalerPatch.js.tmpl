@@ -114,7 +114,7 @@ if (typeof Window_Base !== "undefined") {
 }
 if (typeof Bitmap !== "undefined") {
     const o = Bitmap.prototype.initialize;
-    Bitmap.prototype.initialize = function () { o.apply(this, arguments); this.outlineWidth = Math.max(1, R(3)); };
+    Bitmap.prototype.initialize = function () { o.apply(this, arguments); this.outlineWidth = Math.max(1, R(isMZ ? 3 : 4)); };   // MV draws text outlines 4 px wide, MZ 3 px
 }
 if (isMZ) {
     if (typeof Sprite_Gauge !== "undefined") for (const m of ["bitmapWidth", "bitmapHeight", "gaugeHeight"]) scaleRet(Sprite_Gauge, m);

@@ -43,3 +43,25 @@ def recover_key(encrypted: bytes) -> bytes:
     if len(encrypted) < 32:
         raise CryptoError("file too short")
     return bytes(a ^ b for a, b in zip(encrypted[16:32], PNG_MAGIC))
+
+
+def png_size_from_head(head: bytes, key: bytes | None = None, encrypted: bool = False) -> tuple[int, int] | None:
+    """Width and height of a PNG from its first bytes, without reading or decrypting the rest. For an encrypted file the
+    encrypted part is only the 16-byte signature + IHDR header, so the size itself (bytes 16-24 of the real PNG) is readable
+    even without the key; with a key the signature is checked as well, which tells a wrong key from a right one."""
+    if encrypted:
+        if len(head) < 16 + 24 or head[:5] != HEADER[:5]:
+            return None
+        if key is not None and not looks_like_png(_xor16(head[16:32], key)):
+            return None
+        png = bytes(16) + head[32:40]                       # only bytes 16..24 are used below
+    else:
+        if len(head) < 24 or not looks_like_png(head):
+            return None
+        png = head
+    w, h = int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+    return (w, h) if w > 0 and h > 0 else None
+
+
+def key_decrypts(encrypted_head: bytes, key: bytes) -> bool:
+    return len(encrypted_head) >= 32 and encrypted_head[:5] == HEADER[:5] and looks_like_png(_xor16(encrypted_head[16:32], key))

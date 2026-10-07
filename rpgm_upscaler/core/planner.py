@@ -47,6 +47,7 @@ class Plan:
     skipped_windowskins: list[str] = field(default_factory=list)
     mode: str = ""                 # RGSS: hires | stock640
     patch_hook: object = None      # callable(plan, out) -> list[str]; replaces the MV/MZ engine patcher
+    tileset_side: int = 768        # longest side of the biggest tileset sheet seen (the map renderer's texture slots depend on it)
 
     def summary(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -56,30 +57,36 @@ class Plan:
 
 
 def _image_dims(path: Path, encrypted: bool, key: bytes | None) -> tuple[int, int] | None:
+    """Image size from the first bytes of the file (a PNG keeps it in its header, even inside an encrypted file); only
+    an image that does not look like a plain PNG is opened with Pillow."""
     try:
+        with open(path, "rb") as f:
+            head = f.read(40)
+        dims = crypto.png_size_from_head(head, key, encrypted)
+        if dims is not None:
+            return dims
         if encrypted:
-            if key is None:
-                return None
-            data = crypto.decrypt(path.read_bytes(), key)
-            import io
-            return Image.open(io.BytesIO(data)).size
+            return None
         with Image.open(path) as im:
             return im.size
     except Exception:  # noqa: BLE001
         return None
 
 
+def effective_orig(project: Project, opts: Options) -> tuple[tuple[int, int], tuple[int, int]]:
+    """(screen, ui area) the game was authored for: `--orig WxH` wins over what was detected (a plugin may change the
+    resolution at run time, which no file reveals)."""
+    if opts.orig:
+        return tuple(opts.orig), tuple(opts.orig)
+    return project.screen, project.ui_area
+
+
 def make_scale_plan(project: Project, opts: Options) -> scaling.ScalePlan:
-    n = scaling.parse_scale(opts.scale, project.screen, tuple(opts.target))
-    sp = scaling.ScalePlan(n=n, orig=project.screen, ui_orig=project.ui_area, target=tuple(opts.target),
+    screen, ui = effective_orig(project, opts)
+    n = scaling.parse_scale(opts.scale, screen, tuple(opts.target))
+    sp = scaling.ScalePlan(n=n, orig=screen, ui_orig=ui, target=tuple(opts.target),
                            tile_orig=project.tile_size, ui_fill=opts.ui_fill, anchor=opts.anchor)
     sp.warnings = sp.check()
-    from .patcher import tex_multiplier
-    k = tex_multiplier(n)
-    if k > 2:
-        side = 2048 * k
-        sp.warnings.append(f"Tilesets at x{n:g} need {side}x{side} map textures (about {side * side * 4 * 4 // 2**20} MB of GPU "
-                           "memory); lower the scale if the map fails to render.")
     return sp
 
 
@@ -120,7 +127,10 @@ def build_plan(project: Project, opts: Options) -> Plan:
         c = cat_mod.category_for(web_rel)
         enc = ext in crypto.ENCRYPTED_IMAGE_EXTS
         if c is None or not (ext == ".png" or enc):
-            plan.copies += 1
+            if enc and c is None and key is not None and not opts.reencrypt:
+                keep(relpos, enc, "other")             # plain-image mode leaves no encrypted image behind
+            else:
+                plan.copies += 1
             continue
         if c.name in opts.skip or c.policy == cat_mod.COPY:
             keep(relpos, enc, c.name)
@@ -136,6 +146,8 @@ def build_plan(project: Project, opts: Options) -> Plan:
             continue
         w, h = dims
         stem = f.stem
+        if c.name == "tilesets":
+            plan.tileset_side = max(plan.tileset_side, w, h)
         if cat_mod.is_windowskin(c.name, stem, w, h) and not opts.scale_windowskin:
             plan.skipped_windowskins.append(relpos.as_posix())
             keep(relpos, enc, c.name)
@@ -167,4 +179,10 @@ def build_plan(project: Project, opts: Options) -> Plan:
                 plan.warnings.append(msg)
     if project.has_encrypted_audio:
         plan.warnings.append("Encrypted audio is copied unchanged.")
+    from .patcher import tex_multiplier
+    k = tex_multiplier(sp.n, plan.tileset_side)
+    if k > 2:
+        side = 2048 * k
+        plan.warnings.append(f"Tilesets at x{sp.n:g} need {side}x{side} map textures (about {side * side * 4 * 4 // 2**20} MB of GPU "
+                             "memory); lower the scale if the map fails to render.")
     return plan

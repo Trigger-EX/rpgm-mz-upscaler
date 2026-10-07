@@ -27,10 +27,10 @@ def format_plugins_js(prefix: str, entries: list[dict]) -> str:
     return f"{prefix}[\n{lines}\n];\n"
 
 
-def tex_multiplier(n: float) -> int:
-    """Factor by which the tilemap renderer's 1024px sheet slots / 2048px textures must grow.
-    The largest default tileset sheet side is 768px."""
-    return max(1, math.ceil(768 * n / 1024 - 1e-9))
+def tex_multiplier(n: float, side: int = 768) -> int:
+    """Factor by which the tilemap renderer's 1024px sheet slots / 2048px textures must grow, given the longest side of the
+    game's biggest tileset sheet (768px for the default tilesets; a custom one can be larger)."""
+    return max(1, math.ceil(max(side, 768) * n / 1024 - 1e-9))
 
 
 _TILEMAP_NUM = re.compile(r"(?<![\w.])(1024|2048)(?![\w.])")
@@ -45,7 +45,7 @@ def patch_tilemap_lib(source: str, k: int) -> tuple[str, int]:
 def render_plugin(plan: Plan, engine: str) -> str:
     sp = plan.scale
     cfg = {"n": sp.n, "orig": list(sp.orig), "target": list(sp.target), "ui": list(sp.ui_area),
-           "offset": list(sp.offset), "tile": sp.tile, "texMult": tex_multiplier(sp.n), "engine": engine}
+           "offset": list(sp.offset), "tile": sp.tile, "texMult": tex_multiplier(sp.n, plan.tileset_side), "engine": engine}
     tmpl = resources.files("rpgm_upscaler.core").joinpath("templates/UpscalerPatch.js.tmpl").read_text(encoding="utf-8")
     return (tmpl.replace("__CONFIG__", json.dumps(cfg)).replace("__N_TEXT__", f"{sp.n:g}")
             .replace("__TW__", str(sp.target[0])).replace("__TH__", str(sp.target[1])))
@@ -81,6 +81,9 @@ def apply_patches(plan: Plan, out: Path) -> list[str]:
             if not remaining:
                 system["hasEncryptedImages"] = False
                 changed = True
+            else:                                   # the engine then looks for the encrypted name of EVERY image
+                plan.warnings.append("Some images are still encrypted (no key for them, or outside img/), so the game keeps "
+                                     "hasEncryptedImages=true and the decrypted PNG copies will not load. Run without --plain-images.")
         if changed:
             _write_json(sysfile, system)
             done.append(sysfile.relative_to(out).as_posix())
@@ -96,7 +99,7 @@ def apply_patches(plan: Plan, out: Path) -> list[str]:
             done.append(pkg_out.relative_to(out).as_posix())
 
     lib = web / "js" / "libs" / "pixi-tilemap.js"
-    k = tex_multiplier(sp.n)
+    k = tex_multiplier(sp.n, plan.tileset_side)
     if k > 1 and lib.is_file():
         text, count = patch_tilemap_lib((src_web / "js" / "libs" / "pixi-tilemap.js").read_text(encoding="utf-8"), k)
         if count:

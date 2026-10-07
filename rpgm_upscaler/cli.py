@@ -22,12 +22,14 @@ def _opts(a: argparse.Namespace) -> Options:
                    model=a.model or "", resamplers=res, skip=a.skip or [], movies=not a.no_movies,
                    patch=not a.no_patch, reencrypt=not a.plain_images, ui_fill=a.ui_fill,
                    anchor=a.anchor, workers=a.workers, resume=not a.overwrite,
-                   scale_windowskin=a.scale_windowskin)
+                   scale_windowskin=a.scale_windowskin,
+                   orig=tuple(int(x) for x in a.orig.lower().split("x")) if a.orig else None)
 
 
 def _add_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("game")
     p.add_argument("--target", default="1920x1080")
+    p.add_argument("--orig", metavar="WxH", help="resolution the game was made for, when it cannot be detected (e.g. a plugin lets the player pick one)")
     p.add_argument("--scale", default="fit", help="fit | number (rounded down to a multiple of 1/8)")
     p.add_argument("--engine", default="lanczos", choices=[*engines.PILLOW_ENGINES, *engines.NCNN_ENGINES])
     p.add_argument("--engine-path")
