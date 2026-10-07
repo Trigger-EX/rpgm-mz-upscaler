@@ -219,7 +219,7 @@ class Runner:
         tmp.write_text(json.dumps(manifest))
         tmp.replace(p)
 
-    PREFETCH_PIXELS = 6_000_000          # AI engine: how many source pixels are held and enlarged per batch
+    PREFETCH_PIXELS = 6_000_000          # AI engine: output pixels (Job.cost) held and enlarged per batch
     PREFETCH_COUNT = 24
 
     @staticmethod
@@ -243,7 +243,7 @@ class Runner:
         if not avail or wanted <= 1:
             return wanted
         biggest = max((j.cost for j in jobs), default=1)
-        per_job = biggest * max(n, 1.0) ** 2 * 4 * 8          # RGBA, a handful of working copies (resampler, atlas, output)
+        per_job = biggest * 4 * 8                              # `cost` is output pixels: RGBA, a handful of working copies
         fit = int(avail * 0.6 // max(per_job, 1))
         if fit < wanted:
             self._log("info", f"Using {max(1, fit)} worker(s) instead of {wanted}: the largest image needs about {per_job / 2**20:.0f} MB")
