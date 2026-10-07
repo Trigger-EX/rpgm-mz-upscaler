@@ -43,12 +43,14 @@ def find_installed(src: str = "ja", dst: str = "en") -> Path | None:
 
 
 def deps_available() -> tuple[bool, str]:
+    from . import pyenv
+    pyenv.activate()
     try:
         import ctranslate2  # noqa: F401
         import sentencepiece  # noqa: F401
         return True, ""
     except ImportError as e:
-        return False, f"missing {e.name}. Install with: pip install ctranslate2 sentencepiece"
+        return False, f"missing {e.name}. Install with: pip install ctranslate2 sentencepiece (or use the Translation tab's Install Python packages button)"
 
 
 def package_version(model_dir: Path) -> str:

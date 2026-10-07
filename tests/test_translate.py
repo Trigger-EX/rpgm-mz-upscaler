@@ -257,3 +257,39 @@ def test_cli_translate_and_dump(tmp_path, monkeypatch, capsys):
     assert d["english"]["ボス撃破"] == "Boss Defeated" and d["english"]["ポーション"] == "Potion" and d["english"]["アレックス"] == "Arekkusu"
     assert main(["saves", "dump", str(sv), "--translate"]) == 0
     assert "ドア開放 [Door Open]" in capsys.readouterr().out
+
+
+# ---- private venv for the optional packages ---------------------------------------------------------------
+def test_pyenv_creates_managed_venv_and_activates(monkeypatch, tmp_path):
+    from rpgm_upscaler.translate import pyenv
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(pyenv, "in_venv", lambda: False)         # as on a system Python that refuses pip (PEP 668)
+    calls = []
+
+    def fake_run(cmd, log, cancel):
+        calls.append(cmd)
+        if cmd[1:3] == ["-m", "venv"]:
+            sp = Path(cmd[3]) / "lib" / "python3.x" / "site-packages"
+            sp.mkdir(parents=True)
+            (Path(cmd[3]) / "bin").mkdir()
+            (Path(cmd[3]) / "bin" / "python").write_text("")
+        return 0
+
+    monkeypatch.setattr(pyenv, "_run", fake_run)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    where = pyenv.install_packages(["somepkg"])
+    assert where == str(pyenv.venv_dir())
+    assert calls[0][1:3] == ["-m", "venv"] and calls[1][1:4] == ["-m", "pip", "install"] and calls[1][0].startswith(str(pyenv.venv_dir()))
+    assert str(pyenv.venv_dir() / "lib" / "python3.x" / "site-packages") in sys.path
+    calls.clear()
+    pyenv.install_packages(["somepkg"])                          # the venv exists now: only pip runs
+    assert len(calls) == 1
+
+
+def test_pyenv_reports_failed_venv(monkeypatch, tmp_path):
+    from rpgm_upscaler.translate import pyenv
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(pyenv, "in_venv", lambda: False)
+    monkeypatch.setattr(pyenv, "_run", lambda *a: 1)
+    with pytest.raises(pyenv.EnvError, match="python3-venv"):
+        pyenv.install_packages(["x"])

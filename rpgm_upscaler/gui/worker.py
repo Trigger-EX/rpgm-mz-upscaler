@@ -176,6 +176,27 @@ class ModelWorker(QThread):
             self.failed.emit(str(e))
 
 
+class DepsWorker(QThread):
+    """pip-installs the translation packages, into a private venv when the system Python is externally managed."""
+    line = Signal(str)
+    done = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    def run(self) -> None:
+        from ..translate import pyenv
+        try:
+            self.done.emit(pyenv.install_packages(pyenv.TRANSLATE_PACKAGES, self.line.emit, self._cancel))
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))
+
+
 class GameTranslateWorker(QThread):
     """Translates a whole game into a new folder (see translate/gamerun.py)."""
     progress = Signal(str, int, int)        # stage, done, total
