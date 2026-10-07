@@ -222,10 +222,12 @@ wrapArgs(Game_Picture, "show", function (name, origin, x, y) {
 wrapArgs(Game_Picture, "move", function (origin, x, y) {
     const a = Array.from(arguments); a[1] = Math.round(x * N + OX); a[2] = Math.round(y * N + OY); return a;
 });
-// Troop members and actor homes live inside the battle field container, which the engine already centres in the window
-// ((Graphics.width - boxWidth) / 2), so they are scaled but must not get the content offset a second time.
+// Troop members and actor homes: MZ puts them inside a battle field container that the engine already centres in the window
+// ((Graphics.width - boxWidth) / 2), so there they are only scaled; adding the content offset again would shift them by it.
+// MV has no such container offset, so they need the offset (checked on both engines in headless Chromium).
+const BOX_X = isMZ ? 0 : OX, BOX_Y = isMZ ? 0 : OY;
 wrapArgs(Game_Enemy, "setup", function (id, x, y) {
-    const a = Array.from(arguments); a[1] = Math.round(x * N); a[2] = Math.round(y * N); return a;
+    const a = Array.from(arguments); a[1] = Math.round(x * N + BOX_X); a[2] = Math.round(y * N + BOX_Y); return a;
 });
 wrapArgs(Game_Screen, "startZoom", function (x, y) {
     const a = Array.from(arguments); a[0] = Math.round(x * N + OX); a[1] = Math.round(y * N + OY); return a;
@@ -238,7 +240,7 @@ if (src(Sprite_Actor, "setActorHome")) {
     const o = Sprite_Actor.prototype.setActorHome;
     Sprite_Actor.prototype.setActorHome = function () {
         const home = Sprite_Battler.prototype.setHome;
-        this.setHome = (x, y) => home.call(this, Math.round(x * N), Math.round(y * N));
+        this.setHome = (x, y) => home.call(this, Math.round(x * N + BOX_X), Math.round(y * N + BOX_Y));
         try { return o.apply(this, arguments); } finally { delete this.setHome; }
     };
 }

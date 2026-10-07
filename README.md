@@ -62,7 +62,10 @@ It never touches script calls, plugin commands, notes, file names, or **names th
 listed in the report as "kept"). Control codes (`\C[2]`, `\N[1]`, `%1`...) are protected and verified after translation.
 Every translation is listed in `OUT/.translation/report.tsv`; `OUT/.translation/memory.tsv` holds the unique pairs: edit the
 English column and re-run with `--memory memory.tsv` to apply your corrections. Options: `--no-dialogue --no-database --no-system
---no-plugin-params`, `--wrap-chars N`, `--link` (hard-link unchanged files), `--overwrite`.
+--no-plugin-params`, `--wrap-chars N`, `--link` (hard-link unchanged files), `--overwrite`, `--resume` (continue in an existing output:
+text is redone from the cache, images already overlaid are kept), `--fast` / `--beam N` (greedy decoding is about twice as fast, with rougher wording).
+Actor and enemy names are translated first and then reused verbatim in dialogue; in VX / VX Ace the `Vocab` script's messages are translated
+too, and in MZ the plainly textual arguments (`text`, `message`, `title` ...) of plugin commands.
 
 **Images** (`--ocr`): finds Japanese lettering in images with OpenCV + Tesseract, erases it (inpainting) and draws the English over
 it in the same place, size and colour. `--ocr-scope likely` (default: pictures, titles, system) or `all` (every image file),
