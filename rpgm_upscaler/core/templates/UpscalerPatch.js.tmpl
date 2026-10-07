@@ -271,6 +271,8 @@ if (src(Sprite_Actor, "setActorHome")) {
     // commands), `maxWidth = 96` (choice list). The number is rewritten in a copy of the method; if the copy cannot run (a plugin's
     // override closes over something) the original is used instead.
     const LOCAL = /\b((?:const|let|var)\s+(?:ww|wh|bw|bh|extra|maxWidth|maxHeight|width|height)\s*=\s*)(\d+)(\s*;)/g;
+    // A fixed size taken off the screen size, `Graphics.boxWidth - 192` (MZ battle status window next to the command window).
+    const FROM_SCREEN = /\b(Graphics\.(?:box)?(?:Width|Height)\s*-\s*)(\d+)\b/g;
     let rewritten = 0;
     for (const key of Object.getOwnPropertyNames(globalThis)) {
         if (!/^(Window|Scene)_/.test(key)) continue;
@@ -282,11 +284,13 @@ if (src(Sprite_Actor, "setActorHome")) {
             const d = Object.getOwnPropertyDescriptor(cls.prototype, m);
             if (!d || typeof d.value !== "function") continue;
             const text = String(d.value);
-            if (!text.startsWith("function") || !LOCAL.test(text)) { LOCAL.lastIndex = 0; continue; }
-            LOCAL.lastIndex = 0;
+            const hit = text.startsWith("function") && (LOCAL.test(text) | FROM_SCREEN.test(text));
+            LOCAL.lastIndex = 0; FROM_SCREEN.lastIndex = 0;
+            if (!hit) continue;
             let copy;
             try {
-                copy = (0, eval)("(" + text.replace(LOCAL, (all, head, num, tail) => +num === 0 ? all : head + R(+num) + tail) + ")");
+                copy = (0, eval)("(" + text.replace(LOCAL, (all, head, num, tail) => +num === 0 ? all : head + R(+num) + tail)
+                                       .replace(FROM_SCREEN, (all, head, num) => +num === 0 ? all : head + R(+num)) + ")");
             } catch (e) { warn("could not rewrite " + key + "." + m + ": " + e); continue; }
             const orig = d.value;
             cls.prototype[m] = function () {

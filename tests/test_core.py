@@ -435,6 +435,7 @@ const so = function () {}; so.prototype.optionsWindowRect = eval("(function() {\
 so.prototype.calc = function (n) { return n * 10; };
 ctx.Scene_Options = so;
 const sb = function () {}; sb.prototype.partyCommandWindowRect = eval("(function() {\\n    const ww = 192;\\n    return somethingFromAPlugin + ww;\\n})");
+sb.prototype.statusWindowRect = eval("(function() {\\n    const ww = Graphics.boxWidth - 192;\\n    return new Rectangle(0, 0, ww, 10);\\n})");
 ctx.Scene_Battle = sb;
 const stubs = {};
 const scope = new Proxy(ctx, { has: (t, k) => k !== "somethingFromAPlugin", get: (t, k) => typeof k === "symbol" ? undefined : k in t ? t[k] : k in globalThis ? globalThis[k] : (stubs[k] ||= class {}) });
@@ -444,12 +445,13 @@ vm.runInContext("with (scope) {" + fs.readFileSync(process.argv[2], "utf8") + "}
 const r = new ctx.Scene_Options().optionsWindowRect();
 let fallback = "none";
 try { new ctx.Scene_Battle().partyCommandWindowRect(); } catch (e) { fallback = e.constructor.name; }
-console.log(JSON.stringify({ errors, ww: r.width, wh: r.height, fallback }));
+console.log(JSON.stringify({ errors, ww: r.width, wh: r.height, fallback, status: new ctx.Scene_Battle().statusWindowRect().width }));
 """)
     r = subprocess.run([node, str(tmp_path / "run.js"), str(tmp_path / "plugin.js")], capture_output=True, text=True)
     res = json.loads(r.stdout)
     assert not res["errors"], res["errors"]
     assert res["ww"] == round(400 * plan.scale.n) and res["wh"] == 30                       # width rewritten; the computed height is untouched
+    assert res["status"] == 816 - round(192 * plan.scale.n)                                  # "Graphics.boxWidth - 192" keeps the command window's width
     assert res["fallback"] == "ReferenceError"                                             # a method that cannot run as a copy falls back to the original
 
 
