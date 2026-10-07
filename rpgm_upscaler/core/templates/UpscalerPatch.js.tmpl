@@ -253,7 +253,7 @@ if (src(Sprite_Actor, "setActorHome")) {
     const LITERAL = /^function\s*\([^)]*\)\s*\{\s*return\s+(\d+)\s*;?\s*\}$/;
     let scaled = 0;
     for (const key of Object.getOwnPropertyNames(globalThis)) {
-        if (!/^(Window|Scene)_/.test(key)) continue;
+        if (!/^(Window|Scene|Sprite)_/.test(key)) continue;       // Sprite_Name draws into a fixed 128x24 bitmap, for one
         let cls;
         try { cls = globalThis[key]; } catch (e) { continue; }
         if (typeof cls !== "function" || !cls.prototype) continue;

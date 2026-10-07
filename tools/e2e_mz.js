@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Boots an RPG Maker MZ game in headless Chromium, visits the main scenes (title, map, menu, battle, shop, options, save, name input)
 // and screenshots each, plus checks that audio decodes. Errors from the page are collected into report.json.
-// usage: node e2e_mz.js <url> <outdir> <viewportW> <viewportH>
+// usage: node e2e_mz.js <url> <outdir> <viewportW> <viewportH>      (ONLY=battle,shop limits it to those scenes; a software GL is slow)
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('fs');
 
@@ -21,7 +21,9 @@ const fs = require('fs');
   const report = { scenes: {}, logs };
   const frames = (n) => page.evaluate((n) => new Promise((res) => { let i = 0; const f = () => (++i >= n ? res() : requestAnimationFrame(f)); f(); }), n);
   const sceneIs = (name) => page.waitForFunction((name) => SceneManager._scene && SceneManager._scene.constructor.name === name && SceneManager._scene.isReady && SceneManager._scene.isReady() && !SceneManager.isSceneChanging(), name, { timeout: 60000 });
+  const only = process.env.ONLY ? process.env.ONLY.split(',') : null;
   const visit = async (name, scene, setup) => {
+    if (only && !only.includes(name) && name !== 'title') return;
     try {
       if (setup) await page.evaluate(setup);
       await sceneIs(scene);
@@ -60,7 +62,7 @@ const fs = require('fs');
     SceneManager.goto(Scene_Battle);
   });
   // the battle command windows (party / actor commands and the status window)
-  try {
+  if (!only || only.includes('battle')) try {
     await page.evaluate(() => { const sc = SceneManager._scene; sc._messageWindow && sc._messageWindow.terminateMessage && sc._messageWindow.terminateMessage(); BattleManager._phase = 'input'; sc.startPartyCommandSelection(); });
     await frames(40);
     report.scenes.battle_commands = await page.evaluate(() => ({ windows: SceneManager._scene._windowLayer.children.filter((w) => w.visible && w.width > 0).map((w) => [w.constructor.name, Math.round(w.x), Math.round(w.y), Math.round(w.width), Math.round(w.height)]),

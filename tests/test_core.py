@@ -400,6 +400,7 @@ ctx.window = ctx; ctx.globalThis = ctx;
 function cls(name, methods) { const f = function () {}; for (const [k, v] of Object.entries(methods)) f.prototype[k] = eval("(function() {\\n    return " + v + ";\\n})"); ctx[name] = f; return f; }
 cls("Window_Options", { statusWidth: 120, windowWidth: 400, volumeOffset: 20, pageSize: 4, zeroWidth: 0 });
 cls("Window_NameEdit", { faceWidth: 144 });
+cls("Sprite_Name", { bitmapWidth: 128, bitmapHeight: 24 });
 cls("Scene_Base", { mainCommandWidth: 240 });
 const stubs = {};
 const scope = new Proxy(ctx, { has: () => true, get: (t, k) => typeof k === "symbol" ? undefined : k in t ? t[k] : k in globalThis ? globalThis[k] : (stubs[k] ||= class {}) });
@@ -407,13 +408,14 @@ vm.createContext(ctx);
 vm.runInContext("with (scope) {" + fs.readFileSync(process.argv[2], "utf8") + "}", Object.assign(ctx, { scope }));
 const o = new ctx.Window_Options();
 console.log(JSON.stringify({ errors, status: o.statusWidth(), win: o.windowWidth(), vol: o.volumeOffset(), page: o.pageSize(), zero: o.zeroWidth(),
-    face: new ctx.Window_NameEdit().faceWidth(), main: new ctx.Scene_Base().mainCommandWidth() }));
+    face: new ctx.Window_NameEdit().faceWidth(), spriteName: [new ctx.Sprite_Name().bitmapWidth(), new ctx.Sprite_Name().bitmapHeight()], main: new ctx.Scene_Base().mainCommandWidth() }));
 """)
     r = subprocess.run([node, str(tmp_path / "run.js"), str(tmp_path / "plugin.js")], capture_output=True, text=True)
     res = json.loads(r.stdout)
     n = plan.scale.n
     assert not res["errors"], res["errors"]
     assert res["status"] == round(120 * n) and res["win"] == round(400 * n) and res["face"] == round(144 * n) and res["main"] == round(240 * n)
+    assert res["spriteName"] == [round(128 * n), round(24 * n)]                          # sprites with fixed bitmaps, e.g. MZ's Sprite_Name
     assert res["vol"] == 20 and res["page"] == 4 and res["zero"] == 0                    # not pixel sizes
 
 

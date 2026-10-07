@@ -21,7 +21,7 @@ RPGM Hub (Linux, PySide6 + CLI): upscale RPG Maker MV/MZ/VX Ace/VX/XP games to 1
 - Freeware fetch recipe: itch game page -> POST `<game>/download_url` (csrf) -> download page -> POST `<game>/file/<upload_id>?source=game_download&after_download_lightbox=true` -> signed URL (the download page is sometimes empty: retry). `.exe` SFX: `apt-get update && apt-get install p7zip-full unshield`. Plain github.com curl is 403; `git clone` and release-asset URLs work (mkxp-z asset names are unknown here).
 
 ## Remaining ranked items
-1. **MZ battle layout** (`UpscalerPatch.js.tmpl`): `Scene_Battle.statusWindowRect` uses a literal 192 for the command-window width, so the status window is about 120 px too wide at x1.625; many window heights differ a few px from N x original (line-height rounding). Check `battle_commands.png` and the `report.json` of `tools/e2e_mz.js`. The same enemy-offset fix applies to MV; verify MV battle positions with a troop.
+1. **MZ layout polish**: window heights differ a few px from N x original (line-height rounding) in `tools/e2e_mz.js` reports; fixed so far: enemy/actor offset (MZ only), battle status window width (`Graphics.boxWidth - 192`), `Sprite_Name` bitmap (the scan of fixed-size methods now includes `Sprite_*`). Look at the other scenes' screenshots by eye for clipped text (title, menu, status, shop, options, name input).
 2. **Translation**: per-speaker context; note tags and `js/` literals (need plugin knowledge); MV plugin command strings (code 356); XP `Game.ini` title.
 3. **mkxp-z end-to-end** for XP/VX/Ace (`tests/test_e2e_mkxpz.py` needs a binary; releases are not reachable here, building needs SDL2/OpenAL/Ruby).
 4. **GUI**: the old note "`tr()` readiness" is unclear (probably the lazy `HubContext.translator` being created on the UI thread); saves are still written on the UI thread.
@@ -32,7 +32,7 @@ RPGM Hub (Linux, PySide6 + CLI): upscale RPG Maker MV/MZ/VX Ace/VX/XP games to 1
 Stock RGSS (`stock640`) in a real player; real mkxp-z with any Hires pack; XP translation on a real Japanese game; OCR on decorative lettering; MZ in a visible GPU window.
 
 ## Next step
-Take item 1: fix the MZ battle status window width, rerun `tools/e2e_mz.js` on original and upscaled copy, look at `battle_commands.png`.
+Take item 1: run `tools/e2e_mz.js` on the original and upscaled MZ game (about 15 min on software GL; `ONLY=shop,menu` limits it) and look at the screenshots.
 
 ## Chat
 Base name: rpgm-mz-upscaler-27
