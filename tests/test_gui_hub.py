@@ -130,7 +130,7 @@ def test_hub_translation_tab(hub, tmp_path, monkeypatch):
     shown = []
     monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: shown.append(a[2])))
     bad = tmp_path / "bad.argosmodel"; bad.write_bytes(b"nope")
-    t._start_model(str(bad))
+    hub.setup._start_model(str(bad))
     assert wait_for(lambda: bool(shown)) and "not a readable" in shown[0]
 
 

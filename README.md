@@ -12,8 +12,9 @@ Single-file builds (Linux): `tools/build_bundle.sh` makes `dist/rpgm-hub/` with 
 `--with-ocr` for the optional parts; they make it much bigger), and `tools/build_appimage.sh` wraps it into
 `RPGM_Hub-x86_64.AppImage`. `rpgm-hub GAME` opens the window, `rpgm-hub analyze|plan|run|translate-game|... ARGS` is the CLI.
 
-Optional neural translation (pick NLLB or Argos in the dropdown, *Fetch latest* shows the newest download link): click *Translation → Install Python packages* (the hub creates its own virtual environment under `~/.local/share/rpgm-upscaler/venv` if the system Python refuses pip, as on Linux Mint; on Debian/Ubuntu this needs `python3-venv`), or run `.venv/bin/pip install -r requirements-translate.txt`. Then *Translation → Install model*.
-Optional image translation (OCR): click *Translate game → Install Python packages* (same private virtual environment), or `.venv/bin/pip install -r requirements-ocr.txt` and install Tesseract with its Japanese data
+Optional neural translation (pick NLLB or Argos in the dropdown, *Fetch latest* shows the newest download link): click *Setup → Install translation packages* (the hub creates its own virtual environment under `~/.local/share/rpgm-upscaler/venv` if the system Python refuses pip, as on Linux Mint; on Debian/Ubuntu this needs `python3-venv`), or run `.venv/bin/pip install -r requirements-translate.txt`. Then *Setup → Install selected model*.
+Optional image translation (OCR): click *Setup → Install image translation packages* (same private virtual environment), or `.venv/bin/pip install -r requirements-ocr.txt` and install Tesseract with its Japanese data
+The *Setup* page also has a field for a virtualenv of your own (stored as `python_env` in the settings): packages are then installed into and loaded from it; leave it empty for the default behaviour above.
 (`apt install tesseract-ocr tesseract-ocr-jpn tesseract-ocr-jpn-vert`).
 
 ## What works for which engine

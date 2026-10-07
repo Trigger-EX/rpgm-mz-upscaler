@@ -333,3 +333,33 @@ def test_fetch_entries(monkeypatch):
     tree.pop()
     with pytest.raises(argos.ArgosError, match="expected files"):
         nllb.fetch_entry()
+
+
+def test_pyenv_uses_the_users_own_venv(monkeypatch, tmp_path):
+    from rpgm_upscaler.translate import pyenv
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    mine = tmp_path / "mine"
+    pyenv.set_custom_env(str(mine))
+    assert pyenv.custom_env() == mine and str(mine) in pyenv.describe_target()
+    calls = []
+
+    def fake_run(cmd, log, cancel):
+        calls.append(cmd)
+        if cmd[1:3] == ["-m", "venv"]:
+            (Path(cmd[3]) / "lib" / "python3.x" / "site-packages").mkdir(parents=True)
+            (Path(cmd[3]) / "bin").mkdir()
+            (Path(cmd[3]) / "bin" / "python").write_text("")
+        return 0
+
+    monkeypatch.setattr(pyenv, "_run", fake_run)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    assert pyenv.install_packages(["x"]) == str(mine)           # created, and wins even if the hub itself runs in a venv
+    assert calls[1][0] == str(mine / "bin" / "python")
+    assert str(mine / "lib" / "python3.x" / "site-packages") in sys.path
+    other = tmp_path / "notvenv"; other.mkdir(); (other / "f").write_text("")
+    pyenv.set_custom_env(str(other))
+    with pytest.raises(pyenv.EnvError, match="not a virtual environment"):
+        pyenv.install_packages(["x"])
+    pyenv.set_custom_env("")                                     # empty = back to the default
+    assert pyenv.custom_env() is None

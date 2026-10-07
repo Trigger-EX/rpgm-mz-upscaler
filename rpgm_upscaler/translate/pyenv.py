@@ -4,6 +4,8 @@ Distros such as Linux Mint / Debian 12+ / Ubuntu 23.04+ mark the system Python "
 `pip install` is refused. Instead of asking the user to build a venv by hand, the hub creates one under its data dir,
 installs the packages there with that venv's pip, and puts its site-packages on sys.path (`activate`) so the packages are
 importable without restarting. When the hub already runs inside a virtualenv (./run.sh), pip works there as is and is used.
+
+The user can also name a virtualenv of their own (the Setup page, setting `python_env`); it then takes precedence over both.
 """
 from __future__ import annotations
 
@@ -21,6 +23,28 @@ OCR_PACKAGES = ["opencv-python-headless>=4.8"]                              # ke
 
 class EnvError(Exception):
     pass
+
+
+def custom_env() -> Path | None:
+    """The virtualenv the user chose on the Setup page, or None for the default behaviour."""
+    from ..core.settings import load_settings
+    v = load_settings().get("python_env")
+    return Path(v).expanduser() if isinstance(v, str) and v.strip() else None
+
+
+def set_custom_env(path: str | None) -> None:
+    from ..core.settings import save_settings
+    save_settings({"python_env": (path or "").strip()})
+
+
+def describe_target() -> str:
+    """Where install_packages would put things right now, for display."""
+    c = custom_env()
+    if c is not None:
+        return f"{c} (your virtual environment)"
+    if in_venv():
+        return f"{sys.prefix} (the environment the hub runs in)"
+    return f"{venv_dir()} (the hub's private virtual environment)"
 
 
 def venv_dir() -> Path:
@@ -44,11 +68,13 @@ def site_packages(venv: Path | None = None) -> list[Path]:
 
 
 def activate() -> bool:
-    """Make the managed venv's packages importable. Safe to call repeatedly; does nothing when there is no managed venv."""
-    if in_venv():
+    """Make the chosen venv's packages importable (the user's own, else the managed one). Safe to call repeatedly; does
+    nothing when the hub runs inside a venv and none was chosen."""
+    custom = custom_env()
+    if custom is None and in_venv():
         return False
     added = False
-    for p in site_packages():
+    for p in site_packages(custom):
         s = str(p)
         if s not in sys.path:
             sys.path.append(s)
@@ -85,12 +111,18 @@ def _run(cmd: list[str], log: Callable[[str], None], cancel: threading.Event | N
 
 def install_packages(packages: list[str], log: Callable[[str], None] = lambda s: None,
                      cancel: threading.Event | None = None) -> str:
-    """pip-install `packages`. Inside a venv: into it. Otherwise: into the managed venv, created first when missing.
-    Returns a short description of where they went."""
-    if in_venv():
+    """pip-install `packages`. Into the user's chosen venv when there is one, else inside a running venv, else into the
+    managed venv. A missing or empty venv folder is created first. Returns a short description of where they went."""
+    custom = custom_env()
+    if custom is not None and Path(_python(custom)).is_file():
+        target, py = str(custom), str(_python(custom))
+    elif custom is not None and custom.exists() and any(custom.iterdir()):
+        raise EnvError(f"{custom} is not a virtual environment (no {_python(custom).relative_to(custom)} in it). "
+                       "Pick the folder that contains bin/python (Scripts\\python.exe on Windows), or an empty one to create it.")
+    elif custom is None and in_venv():
         target, py = "the current virtual environment", sys.executable
     else:
-        venv = venv_dir()
+        venv = custom or venv_dir()
         py = str(_python(venv))
         if not Path(py).is_file():
             log(f"Creating a virtual environment in {venv}")
