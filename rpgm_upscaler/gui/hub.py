@@ -161,6 +161,8 @@ class HubWindow(QMainWindow):
         on its own, so a save would be read twice and an unsaved edit could be asked about twice."""
         if not self.saves.maybe_discard():
             return
+        if self.saves.doc is not None:
+            self.saves.doc.dirty = False                   # the user just agreed to drop the edits: do not ask again below
         self.saves._auto_open = False
         try:
             info = self.open_project(str(Path(path).parent))

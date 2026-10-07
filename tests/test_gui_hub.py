@@ -285,3 +285,16 @@ def test_preview_pixmaps_are_crisp_for_small_images_and_hidpi_aware():
     assert qi.pixelColor(20, 20).blue() == 255 and qi.pixelColor(20, 20).red() == 0 and qi.pixelColor(15, 15).red() == 255
     big = pil_to_pixmap(Image.new("RGBA", (400, 100)), max_side=100, dpr=2.0)
     assert big.devicePixelRatio() == 2.0 and big.width() == 200
+
+
+def test_opening_a_save_with_unsaved_edits_asks_once(hub, tmp_path, dialogs):
+    g = make_game(tmp_path / "g", "MV")
+    fakesaves.write_mv(g / "save" / "file1.rpgsave")
+    second = fakesaves.write_mv(g / "save" / "file2.rpgsave")
+    hub.open_project(str(g))
+    hub.saves.gold.setValue(7); hub.saves.gold.editingFinished.emit()
+    assert hub.saves.doc.dirty
+    dialogs.clear()
+    hub.open_save_file(str(second))
+    assert [d[0] for d in dialogs].count("question") == 1 and hub.saves.doc.path.name == "file2.rpgsave"
+    hub.saves.wait_for_translation()

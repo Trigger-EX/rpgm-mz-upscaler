@@ -455,7 +455,9 @@ def _translate_images(info, proj, out: Path, translator, opts: Options, res: Res
         if cancel is not None and cancel.is_set():
             return
         rel = p.relative_to(out).as_posix()
-        if done.get(rel) == sig(p) and (not opts.resume or done.get(rel + "|src") == sig(info.root / rel) or not (info.root / rel).is_file()):
+        origin = info.root / rel
+        src_unchanged = (not opts.resume) or not origin.is_file() or done.get(rel + "|src") == sig(origin)   # (archive games have no such file)
+        if done.get(rel) == sig(p) and src_unchanged:
             return
         try:
             img = imageops.load_image(p, key)
