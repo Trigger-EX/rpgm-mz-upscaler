@@ -238,7 +238,12 @@ def translate_game(src: str | Path, out: str | Path, translator, opts: Options |
         res.cancelled = True
         return res
     if archive is not None:
-        open_archive(archive).extract_all(out, lambda d, t, n: progress and progress("copy", d, t), cancel)
+        with open_archive(archive) as arc:
+            arc.extract_all(out, lambda d, t, n: progress and progress("copy", d, t), cancel)
+            res.warnings += [f"{ig} differs from {kp} only in letter case and was not extracted" for kp, ig in arc.collisions]
+        if cancel is not None and cancel.is_set():
+            res.cancelled = True
+            return res
 
     # 2. collect every visible string
     wrap = _wrap_for_game(info, proj, opts)

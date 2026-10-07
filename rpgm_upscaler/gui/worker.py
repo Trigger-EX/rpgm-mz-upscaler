@@ -1,23 +1,26 @@
 """Background threads: analyze/plan, run, and single-image preview. Core code never touches Qt."""
 from __future__ import annotations
 
+import threading
+
 from PySide6.QtCore import QThread, Signal
 
 from ..core.imageops import load_image, upscale_image
 from ..core.planner import build_plan
 from ..core.project import load_project
-from ..core.runner import Runner
+from ..core.runner import Runner, RunResult
 from ..core.settings import Options
 from ..detect import detect_engine
+from ..rgss.pipeline import PrepareCancelled
 
 
-def _plan_for(path: str, opts: Options, mode: str):
+def _plan_for(path: str, opts: Options, mode: str, cancel=None):
     """(plan, prepared) for any supported engine; `prepared` owns a temporary extraction (VX/Ace archives)."""
     info = detect_engine(path)
     if info is not None and info.engine in ("ACE", "VX"):
         from ..rgss import pipeline
         from ..rgss.planner import build_plan as rgss_plan
-        prepared = pipeline.prepare(path)
+        prepared = pipeline.prepare(path, cancel=cancel)
         try:
             return rgss_plan(prepared.project, opts, mode), prepared
         except Exception:
@@ -55,22 +58,26 @@ class RunWorker(QThread):
         self.path, self.out, self.opts, self.mode = path, out, opts, mode
         self.runner: Runner | None = None
         self._cancelled = False          # a cancel that arrives while the plan is still being built must not be lost
+        self._cancel_event = threading.Event()      # also stops the unpacking of an encrypted archive
 
     def cancel(self) -> None:
         self._cancelled = True
+        self._cancel_event.set()
         if self.runner:
             self.runner.cancel()
 
     def run(self) -> None:
         prepared = None
         try:
-            plan, prepared = _plan_for(self.path, self.opts, self.mode)
+            plan, prepared = _plan_for(self.path, self.opts, self.mode, self._cancel_event)
             for w in plan.warnings:
                 self.log.emit("warning", w)
             self.runner = Runner(plan, self.out, self.progress.emit, self.log.emit)
             if self._cancelled:
                 self.runner.cancel()
             self.finished_run.emit(self.runner.run())
+        except PrepareCancelled:
+            self.finished_run.emit(RunResult(cancelled=True))
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
         finally:

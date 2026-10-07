@@ -73,3 +73,49 @@ def test_vectorised_cipher_matches_the_reference_loop():
         for key in (0, 1, 0xDEADCAFE, 0xFFFFFFFF):
             d = os.urandom(n)
             assert a._crypt_data(d, key) == a._crypt_data_py(d, key)
+
+
+def test_archive_is_memory_mapped_and_closable(tmp_path):
+    import mmap
+    f = tmp_path / "Game.rgss3a"
+    f.write_bytes(ar.pack({"Data/A.bin": b"x" * 1000}))
+    with ar.open_archive(f) as a:
+        assert isinstance(a.buf, mmap.mmap) and a.read("data/a.bin") == b"x" * 1000
+    with pytest.raises(ValueError):
+        a.buf.size()                                           # closed on leaving the block
+
+
+def test_names_differing_only_in_case_extract_once_first_wins(tmp_path):
+    f = tmp_path / "Game.rgss3a"
+    f.write_bytes(ar.pack({"Graphics/Pictures/A.png": b"first", "graphics/pictures/a.PNG": b"second", "Data/B.bin": b"b"}))
+    with ar.open_archive(f) as a:
+        assert a.collisions == [("Graphics/Pictures/A.png", "graphics/pictures/a.PNG")]
+        files = a.extract_all(tmp_path / "out")
+    assert len(files) == 2 and (tmp_path / "out/Graphics/Pictures/A.png").read_bytes() == b"first"
+
+
+def test_extract_never_writes_through_a_symlink(tmp_path):
+    outside = tmp_path / "outside"; outside.mkdir()
+    (outside / "keep.txt").write_text("original")
+    dest = tmp_path / "dest"; dest.mkdir()
+    (dest / "Graphics").symlink_to(outside, target_is_directory=True)
+    (dest / "Data").mkdir()
+    (dest / "Data" / "B.bin").symlink_to(outside / "keep.txt")
+    f = tmp_path / "Game.rgss3a"
+    f.write_bytes(ar.pack({"Data/B.bin": b"new"}))
+    with ar.open_archive(f) as a:
+        a.extract_all(dest)
+    assert (outside / "keep.txt").read_text() == "original"            # the file symlink was replaced, not followed
+    assert (dest / "Data/B.bin").read_bytes() == b"new" and not (dest / "Data/B.bin").is_symlink()
+    f.write_bytes(ar.pack({"Graphics/C.png": b"x"}))
+    with ar.open_archive(f) as a, pytest.raises(ar.ArchiveError, match="symbolic link"):
+        a.extract_all(dest)
+    assert not (outside / "C.png").exists()
+
+
+def test_extract_can_be_limited_to_some_entries(tmp_path):
+    f = tmp_path / "Game.rgss3a"
+    f.write_bytes(ar.pack({"Data/Scripts.rvdata2": b"s", "Graphics/Big.png": b"b" * 100}))
+    with ar.open_archive(f) as a:
+        got = a.extract(tmp_path / "o", lambda n: n.startswith("Data/"))
+    assert [p.name for p in got] == ["Scripts.rvdata2"] and not (tmp_path / "o/Graphics").exists()

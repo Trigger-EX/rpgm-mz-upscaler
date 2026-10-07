@@ -81,10 +81,14 @@ def test_alpha_bleed_keeps_alpha():
 
 
 def _stub_ncnn(tmp_path: Path) -> Path:
+    """Stands in for the real binary: handles one file or a directory, and logs every start to calls.log next to itself."""
     exe = tmp_path / "realesrgan-ncnn-vulkan"
-    exe.write_text("#!/usr/bin/env python3\nimport sys\nfrom PIL import Image\n"
-                   "a=sys.argv; i=a[a.index('-i')+1]; o=a[a.index('-o')+1]; s=int(a[a.index('-s')+1])\n"
-                   "im=Image.open(i); im.resize((im.width*s, im.height*s), Image.BICUBIC).save(o)\n")
+    exe.write_text("#!/usr/bin/env python3\nimport sys, pathlib\nfrom PIL import Image\n"
+                   "a=sys.argv; i=pathlib.Path(a[a.index('-i')+1]); o=pathlib.Path(a[a.index('-o')+1]); s=int(a[a.index('-s')+1])\n"
+                   "open(pathlib.Path(__file__).with_name('calls.log'), 'a').write(' '.join(a[1:]) + '\\n')\n"
+                   "pairs = [(f, o / f.name) for f in sorted(i.iterdir())] if i.is_dir() else [(i, o)]\n"
+                   "for f, d in pairs:\n"
+                   "    im = Image.open(f); im.resize((im.width*s, im.height*s), Image.BICUBIC).save(d)\n")
     exe.chmod(0o755)
     return exe
 
@@ -447,3 +451,60 @@ console.log(JSON.stringify({ errors, ww: r.width, wh: r.height, fallback }));
     assert not res["errors"], res["errors"]
     assert res["ww"] == round(400 * plan.scale.n) and res["wh"] == 30                       # width rewritten; the computed height is untouched
     assert res["fallback"] == "ReferenceError"                                             # a method that cannot run as a copy falls back to the original
+
+
+def test_ncnn_picks_the_smallest_sufficient_scale_and_skips_downscales(tmp_path):
+    exe = _stub_ncnn(tmp_path)
+    eng = engines.make_engine("realesrgan", str(exe))                    # animevideov3: x2, x3, x4 networks
+    assert [eng.pick_scale(w) for w in (1.0, 1.625, 2.0, 2.01, 3.5, 9)] == [2, 2, 2, 3, 4, 4]
+    assert engines.make_engine("realesrgan", str(exe), "realesrgan-x4plus").pick_scale(1.5) == 4
+    assert engines.make_engine("waifu2x", str(exe)).pick_scale(1.5) == 2
+    img = Image.new("RGBA", (40, 40), (9, 9, 9, 255))
+    assert eng.resize(img, 20, 20).size == (20, 20) and not (tmp_path / "calls.log").exists()     # shrinking never starts the binary
+    assert eng.resize(img, 65, 65).size == (65, 65)
+    assert "-s 2" in (tmp_path / "calls.log").read_text()
+
+
+def test_ncnn_prefetch_runs_a_batch_in_one_process(tmp_path):
+    exe = _stub_ncnn(tmp_path)
+    eng = engines.make_engine("realesrgan", str(exe))
+    imgs = [Image.new("RGBA", (8 + k, 8), (10 * k, 20, 30, 255)) for k in range(5)]
+    assert eng.prefetch([(i, 1.5) for i in imgs]) == 5
+    assert len((tmp_path / "calls.log").read_text().splitlines()) == 1
+    outs = [eng.enlarge(i, 1.5) for i in imgs]
+    assert len((tmp_path / "calls.log").read_text().splitlines()) == 1     # all five came from the batch
+    assert [o.size for o, _ in outs] == [(2 * (8 + k), 16) for k in range(5)] and not eng._ready
+    assert outs[3][0].getpixel((1, 1))[:3] == (30, 20, 30)
+
+
+def test_ncnn_whole_game_uses_few_processes(tmp_path):
+    exe = _stub_ncnn(tmp_path)
+    g = make_game(tmp_path / "g", "MZ")
+    plan, res = _run(g, tmp_path / "out", engine="realesrgan", engine_path=str(exe))
+    assert res.success, res.failed
+    starts = len((tmp_path / "calls.log").read_text().splitlines())
+    images = sum(1 for j in plan.jobs if j.kind == "image" and not j.passthrough)
+    assert 0 < starts < images / 2, (starts, images)
+
+
+def _install_crasher(monkeypatch, name):
+    from tests import crashers
+    monkeypatch.setattr(runner_mod, "process_image", getattr(crashers, name))
+
+
+def test_a_dead_worker_process_is_retried_not_fatal(tmp_path, monkeypatch):
+    g = make_game(tmp_path / "g", "MZ")
+    _install_crasher(monkeypatch, "crash_once")
+    plan, res = _run(g, tmp_path / "out", workers=2)
+    assert res.success, res.failed
+    assert (tmp_path / "out/.crashed").exists()
+    assert imageops.load_image(tmp_path / "out/img/system/IconSet.png", None).size == (16 * 52, 2 * 52)
+
+
+def test_an_image_that_always_kills_its_worker_fails_alone(tmp_path, monkeypatch):
+    g = make_game(tmp_path / "g", "MZ")
+    _install_crasher(monkeypatch, "crash_always_on_icons")
+    plan, res = _run(g, tmp_path / "out", workers=2)
+    assert [f[0] for f in res.failed] == ["img/system/IconSet.png"]
+    assert res.ok == len([j for j in plan.jobs if not j.keep_source]) - 1
+    assert (tmp_path / "out/img/system/IconSet.png").exists()                # the original is kept

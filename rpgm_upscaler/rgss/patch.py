@@ -6,6 +6,7 @@ stock640  inserts a tiny script that sets 640x480 (the most stock RGSS can do).
 from __future__ import annotations
 
 import json
+import os
 import re
 from importlib import resources
 from pathlib import Path
@@ -59,6 +60,44 @@ def strip_json_comments(text: str) -> str:
     return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
 
 
+_RTP_DIRS = {"ACE": ("Enterbrain/RGSS3", "RGSS3"), "VX": ("Enterbrain/RGSS2", "RGSS2")}
+
+
+def rtp_names(base: Path) -> list[str]:
+    """The RTP packages a game's Game.ini asks for (RTP=, RTP1=, RTP2=, RTP3=); empty entries are ignored."""
+    ini = ci_child(base, "Game.ini")
+    text = ini.read_bytes().decode("cp932", errors="replace") if ini else ""
+    out = []
+    for key in ("RTP", "RTP1", "RTP2", "RTP3"):
+        mt = re.search(rf"^\s*{key}\s*=\s*(.*?)\s*$", text, re.M | re.I)
+        if mt and mt.group(1):
+            out.append(mt.group(1))
+    return out
+
+
+def find_rtp(name: str, engine: str, extra: list[str] | None = None) -> Path | None:
+    """Look for an installed RTP package folder (the one holding Graphics/ and Audio/) in the places Linux users keep it:
+    $RPGM_RTP, a Wine prefix (the Windows installer's `Common Files/Enterbrain` folder), ~/RTP, ~/.local/share/rtp, /usr/share."""
+    roots: list[Path] = [Path(x) for x in (extra or [])]
+    roots += [Path(x) for x in os.environ.get("RPGM_RTP", "").split(os.pathsep) if x]
+    home = Path.home()
+    prefixes = [Path(os.environ["WINEPREFIX"])] if os.environ.get("WINEPREFIX") else []
+    prefixes += [home / ".wine"]
+    for pre in prefixes:
+        for pf in ("Program Files (x86)", "Program Files"):
+            for sub in _RTP_DIRS.get(engine, ()):
+                roots.append(pre / "drive_c" / pf / "Common Files" / sub)
+    roots += [home / "RTP", home / ".local/share/rtp", Path("/usr/share/rtp"), Path("/usr/share/rpgmaker-rtp")]
+    for root in roots:
+        cands = [ci_child(root, name)] if root.is_dir() else []
+        if root.name.lower() == name.lower():
+            cands.append(root)
+        for cand in cands:
+            if cand is not None and cand.is_dir() and ci_child(cand, "Graphics") is not None:
+                return cand
+    return None
+
+
 def apply_hires(plan, out: Path) -> list[str]:
     n = plan.scale.n
     cfg_path = out / "mkxp.json"
@@ -76,10 +115,17 @@ def apply_hires(plan, out: Path) -> list[str]:
         "fixedAspectRatio": True, "winResizable": True, "smoothScaling": 1, "vsync": True,
     })
     cfg.setdefault("RTP", [])
+    found = []
+    for name in rtp_names(plan.project.base):                       # point mkxp-z at an RTP that is already installed
+        path = find_rtp(name, plan.project.engine)
+        if path is not None and str(path) not in cfg["RTP"]:
+            cfg["RTP"].append(str(path))
+            found.append(f"{name} -> {path}")
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     w, h = plan.project.screen
     (out / "README-HUB.txt").write_text(README.format(title=plan.project.title or "your game", n=n, w=w, h=h, ww=round(w * n), wh=round(h * n),
                                                       rtp="RPGVXAce" if plan.project.engine == "ACE" else "RPGVX"), encoding="utf-8")
+    plan.warnings.extend(f"RTP found and added to mkxp.json: {f}" for f in found)
     return ["mkxp.json", "README-HUB.txt"]
 
 

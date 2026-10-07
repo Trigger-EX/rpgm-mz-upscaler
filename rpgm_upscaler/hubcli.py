@@ -179,7 +179,7 @@ def run_rgss_command(args, info, opts) -> int:
     try:
         if args.cmd == "analyze":
             print(f"engine: {info.label}\nfolder: {info.root}\narchive: {info.archive.name if info.archive else 'none (loose files)'}")
-            prep = pipeline.prepare(args.game)
+            prep = pipeline.prepare(args.game, basics_only=True)
             try:
                 p = prep.project
                 print(f"screen: {p.screen[0]}x{p.screen[1]}\ntile size: {p.tile_size}\ntitle: {p.title}\nscripts: {p.scripts_path}")
@@ -218,6 +218,7 @@ def run_rgss_command(args, info, opts) -> int:
 def _unpack_scripts(args) -> int:
     from .rgss import scripts as sc
     from .rgss.archive import ArchiveError, open_archive
+    from .rgss.project import RgssProjectError
     info = detect_engine(args.game)
     if info is None or info.engine not in ("ACE", "VX", "XP"):
         print("not an RGSS (XP / VX / VX Ace) project", file=sys.stderr)
@@ -228,20 +229,22 @@ def _unpack_scripts(args) -> int:
                 print("this game has no encrypted archive", file=sys.stderr)
                 return 1
             dest = Path(args.output) if args.output else info.root / (info.archive.stem + "_extracted")
-            files = open_archive(info.archive).extract_all(dest, lambda d, t, n: print(f"\r{d}/{t} {n[-50:]:50s}", end="", file=sys.stderr))
+            with open_archive(info.archive) as arc:
+                files = arc.extract_all(dest, lambda d, t, n: print(f"\r{d}/{t} {n[-50:]:50s}", end="", file=sys.stderr))
+                for kept, ignored in arc.collisions:
+                    print(f"\nwarning: {ignored} differs from {kept} only in letter case and was not extracted", file=sys.stderr)
             print(f"\nextracted {len(files)} files to {dest}")
             return 0
-        from .rgss.project import load_rgss_project
-        base = None
-        tmp = None
-        if info.archive is not None and not (info.root / "Data").is_dir():
-            import tempfile
-            tmp = Path(tempfile.mkdtemp(prefix="rpgmhub_"))
-            open_archive(info.archive).extract_all(tmp)
-            base = tmp
+        from .rgss import pipeline
+        prep = pipeline.prepare(args.game, basics_only=True)          # only the script list is needed, not the images
         try:
-            proj = load_rgss_project(args.game, base=base, info=info)
+            proj = prep.project
             f = proj.base / proj.scripts_path.replace("\\", "/")
+            if not f.is_file() and info.archive is not None:               # Game.ini names a script file elsewhere in the archive
+                prep.cleanup()
+                prep = pipeline.prepare(args.game)
+                proj = prep.project
+                f = proj.base / proj.scripts_path.replace("\\", "/")
             arr = sc.load(f.read_bytes())
             for e in sc.listing(arr):
                 print(f"{e.index:>3}  {e.id:>8}  {e.size:>7} B  {e.title}")
@@ -253,11 +256,9 @@ def _unpack_scripts(args) -> int:
                     (dest / f"{i:03d}_{safe}.rb").write_text(sc.source(entry), encoding="utf-8")
                 print(f"extracted {len(arr)} scripts to {dest}")
         finally:
-            if tmp:
-                import shutil
-                shutil.rmtree(tmp, ignore_errors=True)
+            prep.cleanup()
         return 0
-    except (ArchiveError, sc.ScriptsError, OSError, KeyError) as e:
+    except (ArchiveError, sc.ScriptsError, RgssProjectError, OSError, KeyError) as e:
         print("error:", e, file=sys.stderr)
         return 2
 

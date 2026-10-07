@@ -181,3 +181,37 @@ def test_cli_rgss(tmp_path, capsys):
     assert cli_main(["unpack", str(loose)]) == 1
     xp = tmp_path / "xp"; (xp / "Data").mkdir(parents=True); (xp / "Game.ini").write_text("[Game]\nLibrary=RGSS104E.dll\n")
     assert cli_main(["plan", str(xp)]) == 2
+
+
+def test_analyze_and_scripts_only_unpack_the_basics_and_cancel_stops(tmp_path):
+    import threading
+    from rpgm_upscaler.rgss import pipeline
+    g = make_ace(tmp_path / "g", ace=True, archive=True)
+    prep = pipeline.prepare(g, basics_only=True)
+    try:
+        files = sorted(p.relative_to(prep.project.base).as_posix() for p in prep.project.base.rglob("*") if p.is_file())
+        assert not any(f.startswith("Graphics") for f in files) and any(f.lower().startswith("data/scripts") for f in files)
+        assert prep.project.screen and prep.project.title == "Fake Ace"
+    finally:
+        prep.cleanup()
+    ev = threading.Event(); ev.set()
+    with pytest.raises(pipeline.PrepareCancelled):
+        pipeline.prepare(g, cancel=ev)
+
+
+def test_installed_rtp_is_found_and_added_to_mkxp_json(tmp_path, monkeypatch):
+    from rpgm_upscaler.rgss import patch
+    rtp = tmp_path / "rtps" / "RPGVXAce"
+    (rtp / "Graphics").mkdir(parents=True)
+    monkeypatch.setenv("RPGM_RTP", str(tmp_path / "rtps"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert patch.find_rtp("rpgvxace", "ACE") == rtp and patch.find_rtp("RPGVX", "VX") is None
+    g = make_ace(tmp_path / "g", ace=True)
+    assert patch.rtp_names(g) == ["RPGVXAce"]
+    from rpgm_upscaler.core.settings import Options
+    from rpgm_upscaler.rgss.planner import build_plan
+    from rpgm_upscaler.rgss.project import load_rgss_project
+    plan = build_plan(load_rgss_project(g), Options(), "hires")
+    out = tmp_path / "out"; out.mkdir()
+    patch.apply_hires(plan, out)
+    assert json.loads((out / "mkxp.json").read_text())["RTP"] == [str(rtp)]

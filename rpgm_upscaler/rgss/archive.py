@@ -1,6 +1,8 @@
 """RGSS encrypted archives: XP/VX (.rgssad / .rgss2a, v1) and VX Ace (.rgss3a, v3). Read, extract and (for tests) pack."""
 from __future__ import annotations
 
+import mmap
+import os
 import struct
 import threading
 from dataclasses import dataclass
@@ -92,16 +94,44 @@ def safe_relpath(name: str) -> PurePosixPath:
 
 
 class Archive:
+    """The file is memory-mapped, not read: a 1 GB archive costs only the pages that are actually touched."""
+
     def __init__(self, path: str | Path):
         self.path = Path(path)
-        self.buf = self.path.read_bytes()
-        if self.buf[:7] != MAGIC or len(self.buf) < 8:
+        with open(self.path, "rb") as f:
+            try:
+                self.buf = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            except ValueError:                                  # an empty file cannot be mapped
+                raise ArchiveError(f"{self.path.name} is not an RGSS archive (empty file)") from None
+        if len(self.buf) < 8 or self.buf[:7] != MAGIC:
+            self.close()
             raise ArchiveError(f"{self.path.name} is not an RGSS archive (bad header)")
         self.version = self.buf[7]
         if self.version not in (1, 3):
             raise ArchiveError(f"unsupported RGSS archive version {self.version}")
-        self.entries: list[Entry] = self._parse()
-        self._by_name = {e.name.lower(): e for e in self.entries}
+        try:
+            self.entries: list[Entry] = self._parse()
+        except Exception:
+            self.close()
+            raise
+        self._by_name: dict[str, Entry] = {}
+        self.collisions: list[tuple[str, str]] = []            # (kept, ignored): names that differ only in letter case
+        for e in self.entries:
+            kept = self._by_name.setdefault(e.name.lower(), e)
+            if kept is not e:
+                self.collisions.append((kept.name, e.name))
+
+    def close(self) -> None:
+        try:
+            self.buf.close()
+        except (BufferError, ValueError):
+            pass
+
+    def __enter__(self) -> "Archive":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     def _u32(self, pos: int) -> int:
         if pos + 4 > len(self.buf):
@@ -155,18 +185,35 @@ class Archive:
 
     def extract_all(self, dest: str | Path, progress: Callable[[int, int, str], None] | None = None,
                     cancel: threading.Event | None = None) -> list[Path]:
+        return self.extract(dest, None, progress, cancel)
+
+    def extract(self, dest: str | Path, only: Callable[[str], bool] | None = None,
+                progress: Callable[[int, int, str], None] | None = None, cancel: threading.Event | None = None) -> list[Path]:
+        """Write the entries `only` accepts (all by default). When two names differ only in letter case the first one wins,
+        as in the lookup `read` does; nothing is ever written through a symlink that already exists in `dest`."""
         dest = Path(dest)
+        root = dest.resolve()
+        chosen = [e for e in self.entries if self._by_name[e.name.lower()] is e and (only is None or only(e.name))]
         out = []
-        for i, e in enumerate(self.entries):
+        for i, e in enumerate(chosen):
             if cancel is not None and cancel.is_set():
                 break
             rel = safe_relpath(e.name)
             target = dest.joinpath(*rel.parts)
+            cur = dest
+            for part in rel.parts[:-1]:                         # a symlinked folder would send the file somewhere else
+                cur = cur / part
+                if cur.is_symlink():
+                    raise ArchiveError(f"refusing to extract {e.name!r}: {cur} is a symbolic link")
             target.parent.mkdir(parents=True, exist_ok=True)
+            if root not in target.parent.resolve().parents and target.parent.resolve() != root:
+                raise ArchiveError(f"refusing to extract {e.name!r} outside {dest}")
+            if target.is_symlink():                             # replace the link itself, never write through it
+                target.unlink()
             target.write_bytes(_crypt_data(self.buf[e.offset:e.offset + e.size], e.key))
             out.append(target)
             if progress:
-                progress(i + 1, len(self.entries), e.name)
+                progress(i + 1, len(chosen), e.name)
         return out
 
 
