@@ -201,13 +201,15 @@ class FetchWorker(QThread):
 
 
 class DepsWorker(QThread):
-    """pip-installs the translation packages, into a private venv when the system Python is externally managed."""
+    """pip-installs optional packages (default: the translation ones), into a private venv when the system Python is
+    externally managed."""
     line = Signal(str)
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, packages: list[str] | None = None):
         super().__init__(parent)
+        self.packages = packages
         self._cancel = threading.Event()
 
     def cancel(self) -> None:
@@ -216,7 +218,7 @@ class DepsWorker(QThread):
     def run(self) -> None:
         from ..translate import pyenv
         try:
-            self.done.emit(pyenv.install_packages(pyenv.TRANSLATE_PACKAGES, self.line.emit, self._cancel))
+            self.done.emit(pyenv.install_packages(self.packages or pyenv.TRANSLATE_PACKAGES, self.line.emit, self._cancel))
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
 
