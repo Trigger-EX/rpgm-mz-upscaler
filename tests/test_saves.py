@@ -48,7 +48,21 @@ def test_json_save_view_edit_save_reload(tmp_path, writer, name, codec):
     assert (a.level, a.hp, a.exp) == (10, 77, 1234)
     assert t.inventory("items") == {3: 2, 4: 7} and t.position() == (5, 2, 3)
     assert t.tree["actors"]["_data"]["@a"][1]["_name"] == "アレックス"       # untouched data and "@a" metadata preserved
-    assert t.tree["player"]["_realX"] == 2 and t.tree["player"]["_transferring"] is False
+    pl = t.tree["player"]
+    assert t.tree["map"]["_mapId"] == 3 and pl["_transferring"] is True       # reserved transfer, not a bare map id rewrite
+    assert (pl["_newMapId"], pl["_newX"], pl["_newY"]) == (5, 2, 3) and pl["_x"] == 7
+    t.set_position(map_id=3, x=1, y=1)                                        # back to the loaded map: still one transfer
+    assert t.position() == (3, 1, 1) and t.tree["player"]["_newMapId"] == 3
+
+
+def test_json_set_position_same_map_moves_the_player_directly(tmp_path):
+    s = open_save(fakesaves.write_mv(tmp_path / "file1.rpgsave"))
+    s.set_position(x=2, y=4)
+    pl = s.tree["player"]
+    assert (pl["_x"], pl["_realX"], pl["_y"], pl["_realY"]) == (2, 2, 4, 4) and not pl["_transferring"]
+    assert s.position() == (3, 2, 4)
+    s.set_position(map_id=8)                                                  # new map keeps the current x, y
+    assert s.position() == (8, 2, 4) and s.tree["map"]["_mapId"] == 3
 
 
 def test_json_save_guards(tmp_path):
@@ -129,8 +143,11 @@ def test_marshal_save_edit_roundtrip(tmp_path, game, save):
     a = t.actor(1)
     assert (a.level, a.hp, a.exp) == (50, 999, 12345)
     assert t.inventory("items") == {1: 5, 2: 9} and t.position() == (1, 4, 5)
-    real = t._o("Game_Player").ivars["@real_x"]
-    assert real == (4.0 if game == "ace_game" else 4 * 256)
+    pl = t._o("Game_Player").ivars
+    assert pl["@transferring"] is True and (pl["@new_map_id"], pl["@new_x"], pl["@new_y"]) == (1, 4, 5)
+    assert t._o("Game_Map").ivars["@map_id"] == 3          # perform_transfer calls Game_Map#setup only when the ids differ
+    t.set_position(map_id=3, x=4, y=5)
+    assert t.position() == (3, 4, 5)
     assert t.actor(2).name == "Mia"
 
 
@@ -245,3 +262,11 @@ def test_ace_position_when_real_xy_is_an_integer(tmp_path):
     pl.ivars["@real_x"], pl.ivars["@real_y"] = 7, 8
     s.set_position(x=4, y=5)
     assert pl.ivars["@real_x"] == 4 and pl.ivars["@real_y"] == 5 and isinstance(pl.ivars["@real_x"], int)
+
+
+def test_marshal_same_map_position_updates_real_xy(tmp_path):
+    for game, save, want in (("ace_game", "Save01.rvdata2", 4.0), ("vx_game", "Save1.rvdata", 4 * 256)):
+        s = open_save(copy_fixture(tmp_path, game) / save)
+        s.set_position(x=4, y=5)
+        pl = s._o("Game_Player").ivars
+        assert pl["@x"] == 4 and pl["@real_x"] == want and not pl["@transferring"]

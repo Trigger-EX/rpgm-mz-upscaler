@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import functools
+import shutil
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -40,6 +41,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/opt/node22/lib/n
     const r = await p.evaluate(() => { DataManager._globalInfo = null; /* the engine caches it at boot */ const ok = DataManager.loadGame(1);
       return { ok, gold: $gameParty.gold(), sw: [$gameSwitches.value(2), $gameSwitches.value(3)], v2: $gameVariables.value(2),
                item1: $gameParty.numItems($dataItems[1]), item2: $gameParty.numItems($dataItems[2]), level: $gameActors.actor(1).level, hp: $gameActors.actor(1).hp, map: $gameMap.mapId(), x: $gamePlayer.x, y: $gamePlayer.y }; });
+    // a loaded save only enters its map through Scene_Map; a reserved transfer is performed there
+    await p.evaluate(() => SceneManager.goto(Scene_Map));
+    await p.waitForFunction(() => SceneManager._scene instanceof Scene_Map && SceneManager._scene._active && !$gamePlayer.isTransferring(), null, { timeout: 60000 });
+    Object.assign(r, await p.evaluate(() => ({ map2: $gameMap.mapId(), x2: $gamePlayer.x, y2: $gamePlayer.y })));
     console.log(JSON.stringify(r));
   }
   await b.close();
@@ -57,8 +62,14 @@ def node(js_path, *args):
 
 
 def main() -> int:
-    game = Path(sys.argv[1]).resolve()
     work = Path(tempfile.mkdtemp())
+    game = work / "game"                      # a copy, so a second map can be added for the transfer check
+    shutil.copytree(Path(sys.argv[1]).resolve(), game)
+    data = game / "data"
+    shutil.copy(data / "Map001.json", data / "Map002.json")
+    infos = json.loads((data / "MapInfos.json").read_text(encoding="utf-8"))
+    infos.append({**infos[1], "id": 2, "name": "Map002", "order": 2})
+    (data / "MapInfos.json").write_text(json.dumps(infos), encoding="utf-8")
     (work / "t.js").write_text(JS)
     handler = functools.partial(SimpleHTTPRequestHandler, directory=str(game))
     handler.log_message = lambda *a, **k: None
@@ -73,11 +84,11 @@ def main() -> int:
           "items", s.inventory("items"), "level", s.actor(1).level)
     assert (s.gold(), s.get_switch(3), s.get_variable(2), s.inventory("items"), s.actor(1).level) == (500, True, 42, {1: 3}, 4)
     s.set_gold(123456); s.set_switch(2, True); s.set_variable(2, 7); s.set_item("items", 2, 9)
-    s.set_actor(1, level=30, hp=555); s.set_position(map_id=1, x=2, y=3)
+    s.set_actor(1, level=30, hp=555); s.set_position(map_id=2, x=2, y=3)
     s.save()
     got = json.loads(node(work / "t.js", url, "read", str(save)))
     print("engine loaded edited save:", got)
-    want = {"ok": True, "gold": 123456, "sw": [True, True], "v2": 7, "item2": 9, "level": 30, "hp": 555, "map": 1, "x": 2, "y": 3}
+    want = {"ok": True, "gold": 123456, "sw": [True, True], "v2": 7, "item2": 9, "level": 30, "hp": 555, "map2": 2, "x2": 2, "y2": 3}
     bad = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
     print("RESULT:", "FAIL " + str(bad) if bad else "PASS")
     return 1 if bad else 0

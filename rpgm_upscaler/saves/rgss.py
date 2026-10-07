@@ -168,30 +168,36 @@ class MarshalSave(SaveDoc):
         mp, pl = self._o("Game_Map"), self._o("Game_Player")
         if mp is None or pl is None:
             return None
+        if _iv(pl, "@transferring", False):               # a reserved transfer is what the engine will do on load
+            return int(_iv(pl, "@new_map_id", 0)), int(_iv(pl, "@new_x", 0)), int(_iv(pl, "@new_y", 0))
         return int(_iv(mp, "@map_id", 0)), int(_iv(pl, "@x", 0)), int(_iv(pl, "@y", 0))
 
     def set_position(self, map_id=None, x=None, y=None) -> None:
+        """Another map is reached by reserving a transfer: Game_Player#perform_transfer only calls Game_Map#setup when
+        @new_map_id differs from @map_id, so rewriting @map_id alone would keep the old map's events."""
         self._touch()
         mp, pl = self._o("Game_Map"), self._o("Game_Player")
         if mp is None or pl is None:
             raise SaveError("no map/player in this save")
-        if map_id is not None:
-            mp.ivars["@map_id"] = int(map_id)
-        for axis, v in (("x", x), ("y", y)):
-            if v is None:
-                continue
-            pl.ivars["@" + axis] = int(v)
+        cur_map, cur_x, cur_y = self.position()
+        target = int(map_id) if map_id is not None else cur_map
+        tx, ty = int(x) if x is not None else cur_x, int(y) if y is not None else cur_y
+        if target != int(_iv(mp, "@map_id", 0)) or _iv(pl, "@transferring", False):
+            pl.ivars["@transferring"] = True
+            pl.ivars["@new_map_id"], pl.ivars["@new_x"], pl.ivars["@new_y"] = target, tx, ty
+            pl.ivars.setdefault("@new_direction", _iv(pl, "@direction", 2))
+            return
+        for axis, v in (("x", tx), ("y", ty)):
+            pl.ivars["@" + axis] = v
             real = pl.ivars.get("@real_" + axis)
             if real is None:
                 continue
             if getattr(self, "engine", "ACE") == "VX":        # VX: 1/256 tile units
-                pl.ivars["@real_" + axis] = int(v) * 256
+                pl.ivars["@real_" + axis] = v * 256
             elif isinstance(real, float):                     # Ace: tiles; a standing player may hold an Integer, a moving one a Float
                 pl.ivars["@real_" + axis] = m.RFloat(float(v))
             else:
-                pl.ivars["@real_" + axis] = int(v)
-        if "@transferring" in pl.ivars:
-            pl.ivars["@transferring"] = False
+                pl.ivars["@real_" + axis] = v
 
     def playtime(self):
         if self.header is not None:
