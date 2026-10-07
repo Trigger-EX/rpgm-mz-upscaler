@@ -90,6 +90,35 @@ def _value(text: str):
     return text
 
 
+def _translate_game_cmd(args) -> int:
+    from .translate.gamerun import GameTranslateError, Options, translate_game
+    from .translate.service import Translator
+    opts = Options(dialogue=not args.no_dialogue, database=not args.no_database, system=not args.no_system,
+                   plugin_params=not args.no_plugin_params, ocr=args.ocr, ocr_scope=args.ocr_scope, ocr_min_conf=args.ocr_min_conf,
+                   font=args.font, wrap_chars=args.wrap_chars, copy_mode="link" if args.link else "copy", overwrite=args.overwrite,
+                   workers=args.workers, memory=args.memory, keep_referenced=not args.no_keep_referenced)
+    last = {"stage": "", "pct": -1}
+
+    def prog(stage, done, total):
+        pct = done * 100 // total if total else 100
+        if stage != last["stage"] or pct >= last["pct"] + 5 or done == total:
+            last.update(stage=stage, pct=pct)
+            print(f"\r{stage:10s} {done}/{total}   ", end="", file=sys.stderr)
+
+    try:
+        res = translate_game(args.game, args.output, Translator(), opts, progress=prog)
+    except GameTranslateError as e:
+        print("error:", e, file=sys.stderr)
+        return 2
+    print(file=sys.stderr)
+    print(f"{res.engine}: {res.translated}/{res.strings} strings translated, {res.files_changed} files rewritten"
+          + (f", {res.images_changed}/{res.images_scanned} images overlaid ({res.regions} text regions)" if args.ocr else ""))
+    print(f"output: {res.out}   (review table: {res.out / '.translation' / 'report.tsv'})")
+    for w in res.warnings[:10]:
+        print("warning:", w, file=sys.stderr)
+    return 0 if not res.cancelled else 1
+
+
 def _translate_cmd(args) -> int:
     from .translate import argos
     from .translate.service import Translator
@@ -100,12 +129,21 @@ def _translate_cmd(args) -> int:
         return 0
     if items and items[0] == "install":
         last = [0]
+        which = items[1].lower() if len(items) > 1 else "argos"
 
         def prog(done, total):
             if total and done * 100 // total >= last[0] + 5:
                 last[0] = done * 100 // total
                 print(f"\rdownloading {last[0]}%", end="", file=sys.stderr)
-        print("model installed at", argos.install(progress=prog))
+        if which == "nllb":
+            from .translate import nllb
+            print("NLLB-200 600M model (about 620 MB, licence CC-BY-NC 4.0) ...", file=sys.stderr)
+            print("model installed at", nllb.install(progress=prog))
+        elif which == "argos":
+            print("model installed at", argos.install(progress=prog))
+        else:
+            print("usage: translate install [argos|nllb]", file=sys.stderr)
+            return 2
         return 0
     if items and items[0] == "import":
         if len(items) < 2:
@@ -229,6 +267,8 @@ def run_hub_command(args) -> int:
             return _unpack_scripts(args)
         if args.cmd == "translate":
             return _translate_cmd(args)
+        if args.cmd == "translate-game":
+            return _translate_game_cmd(args)
         if args.cmd == "detect":
             info = detect_engine(args.path)
             if info is None:

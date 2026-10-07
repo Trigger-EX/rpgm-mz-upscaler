@@ -174,3 +174,24 @@ def test_hub_upscale_tab_handles_vx_ace(hub, tmp_path):
     up.start()
     assert wait_for(lambda: up.worker is None and not up._busy, 120000)
     assert (tmp_path / "out/mkxp.json").exists() and (tmp_path / "out/Hires/Graphics/Faces/Actor1.png").exists()
+
+
+def test_hub_translate_game_tab(hub, tmp_path):
+    from tests.test_gametranslate import DictBackend, mv_game
+    g = mv_game(tmp_path, "MV")
+    hub.ctx.translator._backend, hub.ctx.translator._backend_tried = DictBackend(), True
+    assert not hub.game_translate.start_btn.isEnabled()                    # nothing open yet
+    hub.open_project(str(g))
+    t = hub.game_translate
+    assert t.start_btn.isEnabled() and "RPG Maker MV" in t.game_label.text() and t.out_edit.text().endswith("_EN")
+    t.out_edit.setText(str(tmp_path / "out"))
+    t.cb_plugins.setChecked(True)
+    t.start()
+    assert t.cancel_btn.isEnabled() or t._worker is None
+    assert wait_for(lambda: t._worker is None and "strings translated" in t.result.toPlainText())
+    assert t.open_btn.isEnabled() and (tmp_path / "out/.translation/report.tsv").is_file()
+    assert "Village" in (tmp_path / "out/data/Map001.json").read_text(encoding="utf-8")
+    # asking for image translation without the tools reports it instead of failing
+    t.cb_ocr.setChecked(True)
+    assert t.ocr_status.text()
+    assert t.shutdown()

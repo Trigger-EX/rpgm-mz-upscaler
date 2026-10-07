@@ -9,11 +9,12 @@ from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QLineEdit, QLis
 
 from ..detect import EngineInfo, detect_engine
 from ..saves.files import find_saves
+from .gametranslate_tab import GameTranslateTab
 from .saves_tab import SavesTab
 from .translate_tab import TranslateTab
 from .upscale_tab import UpscaleTab
 
-PAGES = ["Project", "Upscale", "Saves", "Translation", "Log"]
+PAGES = ["Project", "Upscale", "Saves", "Translate game", "Translation", "Log"]
 
 
 class HubContext(QObject):
@@ -60,8 +61,9 @@ class ProjectPage(QWidget):
         v.addWidget(self.badge)
         nav = QHBoxLayout()
         self.go_up = QPushButton("Upscale this game →"); self.go_saves = QPushButton("Edit saves →")
+        self.go_tr = QPushButton("Translate this game →")
         self.go_save_file = QPushButton("Open a save file…")
-        for w in (self.go_up, self.go_saves, self.go_save_file):
+        for w in (self.go_up, self.go_saves, self.go_tr, self.go_save_file):
             nav.addWidget(w)
         nav.addStretch(1)
         v.addLayout(nav)
@@ -71,12 +73,14 @@ class ProjectPage(QWidget):
         self.edit.returnPressed.connect(self.open_path)
         self.go_up.clicked.connect(lambda: hub.show_page("Upscale"))
         self.go_saves.clicked.connect(lambda: hub.show_page("Saves"))
+        self.go_tr.clicked.connect(lambda: hub.show_page("Translate game"))
         self.go_save_file.clicked.connect(self._open_save_file)
         self._enable_nav(False)
 
     def _enable_nav(self, on: bool) -> None:
         self.go_up.setEnabled(on)
         self.go_saves.setEnabled(on)
+        self.go_tr.setEnabled(on)
 
     def _browse(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Select the game folder", self.edit.text() or str(Path.home()))
@@ -123,9 +127,10 @@ class HubWindow(QMainWindow):
         self.project_page = ProjectPage(self.ctx, self)
         self.upscale = UpscaleTab()
         self.saves = SavesTab(self.ctx)
+        self.game_translate = GameTranslateTab(self.ctx)
         self.translation = TranslateTab(self.ctx)
         self.log_box = QPlainTextEdit(); self.log_box.setReadOnly(True); self.log_box.setMaximumBlockCount(5000)
-        for w in (self.project_page, self.upscale, self.saves, self.translation, self.log_box):
+        for w in (self.project_page, self.upscale, self.saves, self.game_translate, self.translation, self.log_box):
             self.stack.addWidget(w)
         self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.sidebar.setCurrentRow(0)
@@ -152,5 +157,5 @@ class HubWindow(QMainWindow):
         self.saves.open_file(path)
 
     def closeEvent(self, ev) -> None:  # noqa: N802
-        ok = all(t.shutdown() for t in (self.saves, self.upscale, self.translation))
+        ok = all(t.shutdown() for t in (self.saves, self.upscale, self.game_translate, self.translation))
         ev.accept() if ok else ev.ignore()

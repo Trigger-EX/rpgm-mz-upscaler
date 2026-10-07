@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from . import argos
+from . import argos, nllb
 from .cache import Cache
-from .detect import is_japanese, normalize, protect, restore, split_sentences
+from .detect import codes_intact, soften_punct, is_japanese, normalize, protect, restore, split_sentences
 from .glossary import Glossary
 
 
@@ -49,6 +50,7 @@ class Translator:
         self.overrides: dict[str, str] = {}
         self._load_overrides()
         self._backend = backend
+        self._secondary = None
         self._backend_tried = backend is not None or not use_default_backend
         self._backend_error = ""
 
@@ -73,33 +75,41 @@ class Translator:
     # ---- backend
     @property
     def backend(self):
+        """Preferred model: NLLB if installed (better on colloquial lines), else Argos. The other one is kept as a fallback."""
         if not self._backend_tried:
             self._backend_tried = True
-            model = argos.find_installed()
-            if model is not None:
+            loaded = []
+            for finder, cls in ((nllb.find_installed, nllb.NllbBackend), (argos.find_installed, argos.ArgosBackend)):
+                model = finder()
+                if model is None:
+                    continue
                 try:
-                    self._backend = argos.ArgosBackend(model)
+                    loaded.append(cls(model))
                 except Exception as e:  # noqa: BLE001
                     self._backend_error = str(e)
+            self._backend = loaded[0] if loaded else None
+            self._secondary = loaded[1] if len(loaded) > 1 else None
         return self._backend
 
     def reload_backend(self) -> None:
-        self._backend, self._backend_tried, self._backend_error = None, False, ""
+        self._backend, self._secondary, self._backend_tried, self._backend_error = None, None, False, ""
 
     def status(self) -> dict:
         ok, why = argos.deps_available()
-        model = argos.find_installed()
+        a, n = argos.find_installed(), nllb.find_installed()
+        model = n or a
         b = self.backend if (ok and model) else None
         state = "ready" if b else ("deps-missing" if model and not ok else "missing")
         return {"model": state, "model_path": str(model) if model else None, "deps": ok, "deps_hint": why,
+                "models": {"nllb": bool(n), "argos": bool(a)}, "active": getattr(b, "name", None),
                 "error": self._backend_error, "glossary_size": len(self.glossary), "overrides": len(self.overrides)}
 
     # ---- translation
-    def _local(self, text: str) -> Result | None:
+    def _local(self, text: str, romaji: bool = True) -> Result | None:
         """Overrides and glossary only: instant, no model."""
         if text in self.overrides:
             return Result(self.overrides[text], "override", 1.0)
-        en, conf = self.glossary.translate(text)
+        en, conf = self.glossary.translate(text, romaji)
         if en is not None and conf >= 0.5:
             return Result(en, "glossary", conf)
         return None
@@ -108,14 +118,16 @@ class Translator:
         return self.translate_many([text])[0]
 
     def translate_many(self, texts: list[str], progress: Callable[[int, int], None] | None = None,
-                       cancel: threading.Event | None = None) -> list[Result]:
+                       cancel: threading.Event | None = None, romaji: bool = True) -> list[Result]:
+        """`romaji=False` is for running text (dialogue, descriptions): kana-only strings go to the model instead of being
+        transliterated, which is only right for names."""
         out: list[Result | None] = [None] * len(texts)
         pending: dict[str, list[int]] = {}
         for i, t in enumerate(texts):
             if not is_japanese(t):
                 out[i] = Result(t, "passthrough", 1.0)
                 continue
-            r = self._local(t)
+            r = self._local(t, romaji)
             if r is not None:
                 out[i] = r
                 continue
@@ -148,12 +160,17 @@ class Translator:
                 for t, (codes, _, sents) in zip(batch, prepared):
                     pieces = tr[k:k + len(sents)]
                     k += len(sents)
-                    en = restore(" ".join(p for p in pieces if p).strip(), codes)
-                    if not en or is_japanese(en) and en == t:
+                    en, who = self._finish(backend, t, codes, pieces), backend.name
+                    if not self._usable(en, t) and self._secondary is not None:
+                        sec = self._secondary.translate_batch(sents)
+                        alt = self._finish(self._secondary, t, codes, sec)
+                        if self._usable(alt, t):
+                            en, who = alt, self._secondary.name
+                    if not self._usable(en, t):
                         continue
                     self.cache.put(t, tag, en)
                     for i in pending[t]:
-                        out[i] = Result(en, "argos", 0.6)
+                        out[i] = Result(en, who, 0.6)
                     done += len(pending[t])
                 if progress:
                     progress(done, total)
@@ -163,7 +180,34 @@ class Translator:
                     out[i] = Result(t, "unchanged", 0.0)
         return [r if r is not None else Result(texts[i], "unchanged", 0.0) for i, r in enumerate(out)]
 
+    def _finish(self, backend, t: str, codes: list[str], pieces: list[str]) -> str:
+        joined = " ".join(p for p in pieces if p).strip()
+        if not codes_intact(joined, len(codes)):
+            joined = self._retry_without_codes(backend, t, codes)
+        return restore(joined, codes).replace("⁇", "").replace("  ", " ").strip()
+
+    @staticmethod
+    def _usable(en: str, src: str) -> bool:
+        """A model that does not know the text answers with nothing, the source again, or mostly unknown-token debris."""
+        if not en or en == src:
+            return False
+        return any(c.isascii() and c.isalpha() for c in en)
+
     @staticmethod
     def _prepare(text: str) -> tuple[list[str], str, list[str]]:
         protected, codes = protect(normalize(text))
+        protected = soften_punct(protected)
         return codes, protected, split_sentences(protected) or [protected]
+
+    @staticmethod
+    def _retry_without_codes(backend, text: str, codes: list[str]) -> str:
+        """The model dropped or invented a placeholder: translate the text without codes, then put back the codes that
+        started or ended it (colour/format switches usually do) and drop the rest rather than guess where they went."""
+        protected, found = protect(normalize(text))
+        lead = re.match(r"^((?:\[\[\d+\]\]\s*)*)", protected).group(1)
+        trail = re.search(r"((?:\s*\[\[\d+\]\])*)$", protected).group(1)
+        bare = soften_punct(re.sub(r"\[\[\d+\]\]", "", protected))
+        sents = split_sentences(bare) or [bare]
+        out = " ".join(p for p in backend.translate_batch(sents) if p).strip()
+        keep = lambda part: "".join(re.findall(r"\[\[\d+\]\]", part))      # noqa: E731
+        return f"{keep(lead)}{out}{keep(trail)}"

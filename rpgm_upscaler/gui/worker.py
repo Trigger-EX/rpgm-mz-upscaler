@@ -143,3 +143,27 @@ class ModelWorker(QThread):
             self.done.emit(str(path))
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
+
+
+class GameTranslateWorker(QThread):
+    """Translates a whole game into a new folder (see translate/gamerun.py)."""
+    progress = Signal(str, int, int)        # stage, done, total
+    finished_run = Signal(object)           # gamerun.Result
+    failed = Signal(str)
+
+    def __init__(self, translator, path: str, out: str, opts, parent=None):
+        super().__init__(parent)
+        import threading
+        self.translator, self.path, self.out, self.opts = translator, path, out, opts
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    def run(self) -> None:
+        from ..translate.gamerun import translate_game
+        try:
+            self.finished_run.emit(translate_game(self.path, self.out, self.translator, self.opts,
+                                                  progress=self.progress.emit, cancel=self._cancel))
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))

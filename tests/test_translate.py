@@ -50,7 +50,8 @@ def test_control_code_roundtrip():
     assert all(f"[[{i}]]" in protected for i in range(len(codes)))
     assert restore(protected, codes) == text
     assert restore("[[ 0 ]] x", ["\\C[1]"]) == "\\C[1] x"
-    assert split_sentences("一つ目。二つ目！\n三つ目") == ["一つ目。", "二つ目！", "\n", "三つ目"]
+    assert split_sentences("一つ目。二つ目！\n三つ目") == ["一つ目。", "二つ目！\n", "三つ目"]       # bare newlines stay with their sentence
+    assert split_sentences("「行くぞ！」と叫んだ。") == ["「行くぞ！」と叫んだ。"] and split_sentences("影分身!!") == ["影分身!!"]
 
 
 @pytest.mark.parametrize("kana,rom", [("アレックス", "Arekkusu"), ("ルーシー", "Ruushii"), ("シャーロット", "Shaarotto"),
@@ -77,7 +78,7 @@ def test_translator_layers_and_cache(tr):
     b = FakeBackend()
     tr._backend, tr._backend_tried = b, True
     res = tr.translate_many(["ポーション", "English text", "テスト用の長い文章です。", "テスト用の長い文章です。", "ポーション"])
-    assert [r.source for r in res] == ["glossary", "passthrough", "argos", "argos", "glossary"]
+    assert [r.source for r in res] == ["glossary", "passthrough", "fake", "fake", "glossary"]
     assert res[2].text == "EN(テスト用の長い文章です。)"
     assert b.calls == [["テスト用の長い文章です。"]]                 # deduplicated, one batch, glossary hits never reach the model
     again = tr.translate("テスト用の長い文章です。")
@@ -103,7 +104,7 @@ def test_control_codes_survive_the_model(tr):
             return [t.replace("勇者", "the hero") for t in texts]
     tr._backend, tr._backend_tried = Echo(), True
     r = tr.translate("これは\\C[2]勇者\\C[0]の話です。")
-    assert r.source == "argos" and "\\C[2]" in r.text and "\\C[0]" in r.text and "the hero" in r.text
+    assert r.source == "fake" and "\\C[2]" in r.text and "\\C[0]" in r.text and "the hero" in r.text
 
 
 def test_cancel_and_progress(tr):
@@ -112,7 +113,7 @@ def test_cancel_and_progress(tr):
     seen = []
     ev = threading.Event()
     res = tr.translate_many(texts, progress=lambda d, t: (seen.append(d), ev.set() if d >= 32 else None), cancel=ev)
-    assert sum(r.source == "argos" for r in res) == 32 and sum(r.source == "unchanged" for r in res) == 38
+    assert sum(r.source == "fake" for r in res) == 32 and sum(r.source == "unchanged" for r in res) == 38
     assert seen[-1] == 32
 
 
@@ -207,7 +208,7 @@ def test_argos_backend_with_fake_runtime(tmp_path, monkeypatch):
         def __init__(self, h): self.hypotheses = [h]
 
     class CT:
-        def __init__(self, path, device, inter_threads): calls["ct"] = (path, device)
+        def __init__(self, path, device, inter_threads, **kw): calls["ct"] = (path, device)
         def translate_batch(self, toks, **kw): calls["kw"] = kw; return [Hyp(t) for t in toks]
 
     monkeypatch.setitem(sys.modules, "ctranslate2", types.SimpleNamespace(Translator=CT))

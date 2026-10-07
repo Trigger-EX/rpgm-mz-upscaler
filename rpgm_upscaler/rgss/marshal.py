@@ -41,13 +41,20 @@ class RString(_Ext):
         try:
             return self.data.decode("utf-8")
         except UnicodeDecodeError:
+            self.was_sjis = True                      # remember, so edits are written back in the file's own encoding
             return self.data.decode("cp932", errors="replace")
 
     @text.setter
     def text(self, value: str) -> None:
         enc = self.ivars.get("E") if self.ivars else None
         legacy = not self.ivars          # Ruby 1.8 (VX) strings carry no encoding ivar
-        self.data = value.encode("utf-8") if (enc is True or not legacy or value.isascii()) else value.encode("cp932")
+        if enc is True or not legacy or value.isascii() or not getattr(self, "was_sjis", False):
+            self.data = value.encode("utf-8")
+            return
+        try:
+            self.data = value.encode("cp932")
+        except UnicodeEncodeError:                    # e.g. an accented letter in English text: UTF-8 is what the engine reads too
+            self.data = value.encode("utf-8")
 
     def __hash__(self) -> int:
         return hash(self.data)
@@ -247,10 +254,10 @@ class _Reader:
             return self.reg(RString(self.bytes_()))
         if c == "f":
             raw = self.bytes_()
-            txt = raw.decode("ascii")
+            txt = raw.split(b"\0")[0].decode("ascii")      # Ruby 1.9 appends raw mantissa bytes after a NUL; RFloat keeps them
             v = {"inf": math.inf, "-inf": -math.inf, "nan": math.nan}.get(txt)
             if v is None:
-                v = float(txt.split("\0")[0])
+                v = float(txt)
             return self.reg(RFloat(v, raw))
         if c == "l":
             sign = self.byte()
@@ -524,9 +531,8 @@ class _Writer:
 
 
 def _parse_raw(raw: bytes) -> float:
-    t = raw.decode("ascii")
-    return {"inf": math.inf, "-inf": -math.inf, "nan": math.nan}.get(t, None) if t in ("inf", "-inf", "nan") \
-        else float(t.split("\0")[0])
+    t = raw.split(b"\0")[0].decode("ascii")
+    return {"inf": math.inf, "-inf": -math.inf, "nan": math.nan}[t] if t in ("inf", "-inf", "nan") else float(t)
 
 
 def dumps(o: Any) -> bytes:
