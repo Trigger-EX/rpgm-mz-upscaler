@@ -119,7 +119,14 @@ if (typeof Bitmap !== "undefined") {
 if (isMZ) {
     if (typeof Sprite_Gauge !== "undefined") for (const m of ["bitmapWidth", "bitmapHeight", "gaugeHeight"]) scaleRet(Sprite_Gauge, m);
     if (typeof Sprite_Button !== "undefined") for (const m of ["blockWidth", "blockHeight"]) scaleRet(Sprite_Button, m);
-    if (typeof Sprite_Timer !== "undefined") for (const m of ["bitmapWidth", "bitmapHeight"]) scaleRet(Sprite_Timer, m);
+    if (src(Sprite_Timer, "createBitmap")) {   // MZ draws the timer into a fixed 96x48 bitmap (no bitmapWidth hooks exist)
+        Sprite_Timer.prototype.createBitmap = function () {
+            this.bitmap = new Bitmap(R(96), R(48));
+            this.bitmap.fontFace = this.fontFace();
+            this.bitmap.fontSize = this.fontSize();
+            this.bitmap.outlineColor = ColorManager.outlineColor();
+        };
+    }
     scaleRet(Scene_MenuBase, "buttonAreaHeight"); scaleRet(Scene_MenuBase, "mainCommandWidth");
 } else if (src(Sprite_Timer, "createBitmap")) {
     Sprite_Timer.prototype.createBitmap = function () { this.bitmap = new Bitmap(R(96), R(48)); this.bitmap.fontSize = R(32); };
