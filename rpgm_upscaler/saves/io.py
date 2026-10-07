@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 from .model import SaveError
@@ -25,9 +26,26 @@ def backup(path: Path) -> Path:
 
 
 def atomic_write(path: Path, data: bytes) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, path)
+    """Write beside the target, flush to disk, then rename over it: a crash leaves the old save or the new one, never half of one."""
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    try:                                          # make the rename itself durable (not available on every platform)
+        dfd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError:
+        pass
 
 
 def guarded_write(path: Path, data: bytes, loaded_mtime_ns: int, make_backup: bool = True) -> Path | None:

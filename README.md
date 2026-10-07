@@ -1,24 +1,30 @@
 # RPGM Hub
 
-One Linux app for all things RPG Maker: **upscale** a game to 1920×1080, **edit its saves**, and read the
-Japanese names in them through **offline translation**. It covers RPG Maker **MV, MZ, VX Ace and VX** (XP is recognised,
-not supported yet). A GUI and a CLI share the same core.
+One Linux app for all things RPG Maker: **upscale** a game to 1920×1080, **edit its saves**, and **translate a whole
+Japanese game into English offline** (dialogue, database, system text, plugin text and, optionally, lettering inside images). It covers RPG Maker **MV, MZ, VX Ace, VX and XP**. A GUI and a CLI share the same core.
 
 ```
 ./run.sh                     # creates .venv, installs PySide6/Pillow/numpy, starts the hub
 ./run.sh /path/to/game       # ... and opens that game
 .venv/bin/python -m rpgm_upscaler.cli --help
 ```
+Single-file builds (Linux): `tools/build_bundle.sh` makes `dist/rpgm-hub/` with PyInstaller (add `--with-translate` /
+`--with-ocr` for the optional parts; they make it much bigger), and `tools/build_appimage.sh` wraps it into
+`RPGM_Hub-x86_64.AppImage`. `rpgm-hub GAME` opens the window, `rpgm-hub analyze|plan|run|translate-game|... ARGS` is the CLI.
+
 Optional neural translation: `.venv/bin/pip install -r requirements-translate.txt`, then *Translation → Install model*.
+Optional image translation (OCR): `.venv/bin/pip install -r requirements-ocr.txt` and install Tesseract with its Japanese data
+(`apt install tesseract-ocr tesseract-ocr-jpn tesseract-ocr-jpn-vert`).
 
 ## What works for which engine
 
-| | MV | MZ | VX Ace | VX |
-|---|---|---|---|---|
-| Upscale to 1080p | yes (patched engine) | yes (patched engine, **untested on a real MZ**) | yes, via an mkxp-z *Hires* pack | yes, via an mkxp-z *Hires* pack |
-| Save editor | yes | yes | yes | yes |
-| Names from the game database | yes | yes | yes | yes |
-| Encrypted games | images decrypted/re-encrypted | same | `.rgss3a` unpacked | `.rgss2a` unpacked |
+| | MV | MZ | VX Ace | VX | XP |
+|---|---|---|---|---|---|
+| Upscale to 1080p | yes (patched engine) | yes (patched engine, checked on one real MZ game) | yes, via an mkxp-z *Hires* pack | yes, via an mkxp-z *Hires* pack | yes, via an mkxp-z *Hires* pack (RGSS1) |
+| Save editor | yes | yes | yes | yes | yes |
+| Translate a whole game | yes | yes (plugin-command text arguments too) | yes (the `Vocab` script too) | yes | yes |
+| Names from the game database | yes | yes | yes | yes | yes |
+| Encrypted games | images decrypted/re-encrypted | same | `.rgss3a` unpacked | `.rgss2a` unpacked | `.rgssad` unpacked |
 
 ### Upscaling MV / MZ
 Writes a separate copy of the game: sprite sheets are resized cell by cell (no colour bleeding), titles and battle
@@ -44,11 +50,32 @@ and a file that cannot be round-tripped opens **read-only**. Formats: MV `.rpgsa
 byte variants), Ace `.rvdata2` and VX `.rvdata` (Ruby Marshal, written back byte-exact apart from your edits).
 
 ### Offline translation
-Names are translated without any network: user overrides → a bundled RPG glossary with longest-match segmentation and
-katakana → romaji (`ボス撃破` → *Boss Defeated*, `アレックス` → *Arekkusu*) → an optional neural model (Argos
-`ja→en` run directly with ctranslate2 + sentencepiece, no torch) → left unchanged. Results from the model are cached in sqlite.
-The model is a one-time download (or *Import .argosmodel…*); afterwards nothing touches the network. Quality note: a small
-model is fair on sentences and **weak on short names and terms**, which is why the glossary and your overrides come first.
+**Whole game** (`translate-game GAME -o OUT`): writes a translated *copy* (the original is never touched). By default it translates
+
+* event text: messages (a whole message is translated as one passage, then re-wrapped to the message window, split over several
+  windows if needed, speaker labels like `【アレックス】` kept as their own line), choices, scrolling text, name/nickname/profile changes;
+* the database: names, descriptions and battle messages of actors, classes, items, weapons, armor, skills, states, enemies;
+* system text: game title, currency, terms, map display names;
+* visible plugin parameters (MV/MZ): only strings that are not file names, code, switch/variable references or typed as non-text.
+
+It never touches script calls, plugin commands, notes, file names, or **names that scripts or plugins compare against** (those are
+listed in the report as "kept"). Control codes (`\C[2]`, `\N[1]`, `%1`...) are protected and verified after translation.
+Every translation is listed in `OUT/.translation/report.tsv`; `OUT/.translation/memory.tsv` holds the unique pairs: edit the
+English column and re-run with `--memory memory.tsv` to apply your corrections. Options: `--no-dialogue --no-database --no-system
+--no-plugin-params`, `--wrap-chars N`, `--link` (hard-link unchanged files), `--overwrite`, `--resume` (continue in an existing output:
+text is redone from the cache, images already overlaid are kept), `--fast` / `--beam N` (greedy decoding is about twice as fast, with rougher wording).
+Actor and enemy names are translated first and then reused verbatim in dialogue; in VX / VX Ace the `Vocab` script's messages are translated
+too, and in MZ the plainly textual arguments (`text`, `message`, `title` ...) of plugin commands.
+
+**Images** (`--ocr`): finds Japanese lettering in images with OpenCV + Tesseract, erases it (inpainting) and draws the English over
+it in the same place, size and colour. `--ocr-scope likely` (default: pictures, titles, system) or `all` (every image file),
+`--ocr-min-conf`, `--font`. Works on encrypted MV/MZ images (re-encrypted) and RGSS PNG/JPG/BMP. Results depend on the artwork: clean
+UI lettering works well; stylised or heavily decorated text may be missed or misread, so check the result.
+
+**Models**: names and short terms first go through overrides → a bundled RPG glossary → katakana romaji (names only). Running text
+goes to a neural model run directly with ctranslate2 + sentencepiece (no torch): **NLLB-200 600M** if installed
+(`translate install nllb`, 620 MB, CC-BY-NC, noticeably better on colloquial lines) and the small **Argos** `ja→en` model as the
+fast fallback (`translate install`). Each result is cached in sqlite. Model quality is the limit: expect readable but imperfect English.
 
 ## CLI cheat sheet
 ```
@@ -59,7 +86,8 @@ rpgm-hub-cli saves dump SAVE [--json] [--names] [--translate]
 rpgm-hub-cli saves set SAVE --switch 12=on --var 5=100 --gold 5000 --item weapons:2=3 --actor 1:level=20 --map 3 --pos 7,9
 rpgm-hub-cli unpack GAME [-o DIR]                 # encrypted RGSS archive
 rpgm-hub-cli scripts GAME [--extract DIR]         # VX / Ace Ruby scripts
-rpgm-hub-cli translate TEXT... | --file F | status | install | import FILE.argosmodel
+rpgm-hub-cli translate TEXT... | --file F | status | install [nllb] | import FILE.argosmodel
+rpgm-hub-cli translate-game GAME -o OUT [--ocr] [--ocr-scope likely|all] [--memory memory.tsv] [--no-plugin-params] [--link]
 ```
 
 ## What has actually been verified
@@ -70,13 +98,21 @@ rpgm-hub-cli translate TEXT... | --file F | status | install | import FILE.argos
 * **Save formats**: the LZString port is byte-identical to the library MV ships; the Ruby Marshal codec round-trips fixtures made
   by real Ruby 3.3 byte for byte, and Ruby loads what the editor writes. The RGSS archive algorithm was cross-checked against
   mkxp-z's own `rgssad.cpp`, and the mkxp.json keys and the `Hires/` convention against mkxp-z's source.
-* **Not verified**: MZ against its real engine (its scripts are not public); any VX/VX Ace game actually running in mkxp-z or the
-  stock player; real `.rgss3a` files and real Ace/VX saves (only synthetic and Ruby-made ones); the real Argos model (its download host
-  is blocked in the development sandbox, so only the install/import flow and a stubbed runtime are tested).
+* **Real engines and games**: the MV corescript e2e passes; a real **mkxp-z** build runs a generated VX Ace game and the free *Crysalis*
+  Ace game (with the official RTP) with the Hires pack, and `tests/test_e2e_mkxpz.py` checks that the Hires texture is what gets drawn.
+  A real, full **Japanese MZ 1.3.0 game with encrypted images and 34 plugins** was translated (4352 strings, 18 files rewritten, control
+  codes preserved in all but 2 of 1707 strings that have them) and upscaled to 1920x1080; its title, menu and options screens were
+  compared with the original in headless Chromium (UI scaled 1.625x, windows proportional, art sharp). All 131 real Crysalis `.rvdata2`
+  files load and re-save byte-identically. The real Argos and NLLB models were run.
+* **Not verified**: MZ battle, shop and event screens and MZ audio; VX (not Ace) and real `.rgss3a`/`.rgssad` archives;
+  the stock RGSS player (`stock640`); image OCR on real Japanese game artwork (only synthetic images so far);
+  games with plugin-defined resolutions (e.g. a resolution-option plugin) are likely to need manual touch-up.
 
 ## Limitations
-* Only core-engine layouts of MV/MZ are patched; third-party plugins with hard-coded pixel values are not. Expect to touch up odd
-  screens (shops, equip, save list, custom HUDs).
+* Only core-engine layouts of MV/MZ are patched (including every core `*Width/*Height/*Spacing/*Padding` method that returns a bare
+  number); third-party plugins with hard-coded pixel values are not. Expect to touch up odd screens (custom HUDs and menus).
+* Games whose plugins let the player pick the resolution at run time are upscaled for one fixed size (the tool warns); a plugin that
+  sets one fixed resolution (Community_Basic, YEP Core Engine) is detected.
 * MV/MZ tilesets need big map textures (about ×2.7 is the practical limit; the planner warns).
 * Packaged games (`.nw`, exe with an archive) must be extracted first. Encrypted audio is copied unchanged.
 * Saves of games with custom scripts keep their extra data untouched, but the editor may not find non-standard gold/inventory.
@@ -88,6 +124,9 @@ rpgm-hub-cli translate TEXT... | --file F | status | install | import FILE.argos
 ```
 Optional real-engine checks (need node, playwright, Chromium and `git clone --depth 1 https://github.com/rpgtkoolmv/corescript`):
 `tools/run_e2e.sh CORESCRIPT WORKDIR FONT.ttf [--scale 2]` (ENCRYPT=1 for encrypted images) and `tools/e2e_saves.py SAMPLE_GAME`.
+VX/Ace Hires pack against a real mkxp-z: `RPGM_MKXPZ=/path/to/mkxp-z python -m pytest tests/test_e2e_mkxpz.py` (needs xvfb-run, openbox, xdotool, ImageMagick `import`;
+`RPGM_MKXPZ_RUBYLIB` for Ruby's zlib if the binary cannot find it). The translation model test takes `RPGM_HUB_ARGOS_MODEL=/path/ja_en.argosmodel`
+(https://argos-net.com/v1/translate-ja_en-1_1.argosmodel). mkxp-z reads `<exe name>.ini`, so the binary must be copied next to the game as `Game`.
 Fixtures: `tools/make_marshal_fixtures.rb`, `tools/make_save_fixtures.rb` (real Ruby). Design: `docs/plan.md`, `docs/plan-hub.md`.
 
 Licence: GPL-3.0 (see LICENSE). Not affiliated with Gotcha Gotcha Games / Kadokawa; "RPG Maker" is their trademark.

@@ -75,3 +75,77 @@ def make_ace(root: Path, ace=True, archive=False) -> Path:
     if archive:
         (root / "Game.exe").write_bytes(b"MZ-fake")
     return root
+
+
+def make_xp(root: Path, archive=False) -> Path:
+    """A fake RPG Maker XP project (RGSS1): .rxdata Marshal files, 4x4 character sheets, autotiles, Windowskins."""
+    import io
+    root.mkdir(parents=True, exist_ok=True)
+    files: dict[str, bytes] = {}
+    arr = m.RArray()
+    for i, (title, src) in enumerate(SCRIPTS):
+        arr.append(m.RArray([1000 + i, _s(title, False), m.RString(zlib.compress(src.encode("utf-8")), {})]))
+    files["Data/Scripts.rxdata"] = m.dumps(arr)
+    words = m.RObject("RPG::System::Words", {"@gold": m.RString("ゴールド".encode()), "@hp": m.RString("HP".encode()),
+                                              "@equip": m.RString("装備".encode())})
+    files["Data/System.rxdata"] = m.dumps(m.RObject("RPG::System", {"@words": words, "@elements": m.RArray([None, m.RString("炎".encode())]),
+                                                                    "@switches": m.RArray([None])}))
+    actor = m.RObject("RPG::Actor", {"@id": 1, "@name": m.RString("アレックス".encode()), "@class_id": 1})
+    files["Data/Actors.rxdata"] = m.dumps(m.RArray([None, actor]))
+    item = m.RObject("RPG::Item", {"@id": 1, "@name": m.RString("ポーション".encode()), "@description": m.RString("回復する薬。".encode())})
+    files["Data/Items.rxdata"] = m.dumps(m.RArray([None, item]))
+    iv = lambda c, p: m.RObject("RPG::EventCommand", {"@code": c, "@indent": 0, "@parameters": m.RArray(p)})
+    s = lambda t: m.RString(t.encode())
+    lst = m.RArray([iv(101, [s("アレックス")]), iv(401, [s("今日はいい天気ですね。")]),
+                    iv(101, [s("こんにちは、魔王。")]), iv(401, [s("今日はいい天気ですね。")]),
+                    iv(102, [m.RArray([s("はい"), s("いいえ")]), 2]), iv(0, [])])
+    page = m.RObject("RPG::Event::Page", {"@list": lst})
+    ev = m.RObject("RPG::Event", {"@id": 1, "@pages": m.RArray([page])})
+    files["Data/Map001.rxdata"] = m.dumps(m.RObject("RPG::Map", {"@events": m.RHash({1: ev})}))
+    imgs = {"Graphics/Characters/Hero": (128, 192, 32, 48), "Graphics/Tilesets/Town": (256, 512, 32, 32),
+            "Graphics/Autotiles/Grass": (96, 128, 32, 32), "Graphics/Animations/Fire": (960, 384, 192, 192),
+            "Graphics/Windowskins/Skin": (128, 128, 128, 128), "Graphics/Icons/Sword": (24, 24, 24, 24),
+            "Graphics/Battlers/Slime": (120, 90, 120, 90), "Graphics/Titles/Title": (640, 480, 320, 240),
+            "Graphics/Panoramas/Sky": (640, 480, 320, 240), "Graphics/Pictures/Pic": (200, 100, 200, 100)}
+    for name, (w, h, cw, ch) in imgs.items():
+        buf = io.BytesIO()
+        grid_image(w, h, cw, ch).save(buf, "PNG")
+        files[name + ".png"] = buf.getvalue()
+    files["Audio/BGM/Theme.ogg"] = b"OggS-fake"
+    if archive:
+        root.joinpath("Game.rgssad").write_bytes(ar.pack(files, version=1))
+        (root / "Game.exe").write_bytes(b"MZ-fake")
+    else:
+        for name, data in files.items():
+            p = root / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(data)
+    root.joinpath("Game.ini").write_bytes(b"[Game]\r\nLibrary=RGSS104E.dll\r\nScripts=Data\\Scripts.rxdata\r\nTitle=Fake XP\r\nRTP1=Standard\r\n")
+    return root
+
+
+def write_xp_save(path: Path, map_id=3) -> Path:
+    """An XP save: `Save1.rxdata` is twelve consecutive Marshal dumps (characters, frame count, then the $game_* objects)."""
+    s = lambda t: m.RString(t.encode())
+    actor = lambda i, name, lvl: m.RObject("Game_Actor", {"@actor_id": i, "@name": s(name), "@level": lvl, "@exp": lvl * 100, "@hp": 300, "@sp": 40,
+                                                          "@class_id": 1})
+    a1, a2 = actor(1, "アレックス", 5), actor(2, "ミア", 4)
+    streams = [
+        m.RArray([m.RArray([s("Hero"), 0])]),
+        40 * 3725,                                                   # Graphics.frame_count: 1:02:05 at 40 fps
+        m.RObject("Game_System", {"@save_disabled": False}),
+        m.RObject("Game_Switches", {"@data": m.RArray([None, True, False, None, True])}),
+        m.RObject("Game_Variables", {"@data": m.RArray([None, 0, 0, 250])}),
+        m.RObject("Game_SelfSwitches", {"@data": m.RHash()}),
+        m.RObject("Game_Screen", {"@tone": 0}),
+        m.RObject("Game_Actors", {"@data": m.RArray([None, a1, a2])}),
+        m.RObject("Game_Party", {"@actors": m.RArray([a1, a2]), "@gold": 1234, "@items": m.RHash({1: 5, 3: 2}),
+                                 "@weapons": m.RHash({1: 1}), "@armors": m.RHash()}),
+        m.RObject("Game_Troop", {"@enemies": m.RArray()}),
+        m.RObject("Game_Map", {"@map_id": map_id}),
+        m.RObject("Game_Player", {"@x": 7, "@y": 9, "@real_x": 7 * 128, "@real_y": 9 * 128, "@direction": 2, "@transferring": False,
+                                  "@new_map_id": 0, "@new_x": 0, "@new_y": 0, "@new_direction": 0}),
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(m.dump_all(streams))
+    return path

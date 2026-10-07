@@ -64,6 +64,45 @@ def bleed_rgb(img: Image.Image, iterations: int = 8) -> Image.Image:
     return Image.fromarray(a, "RGBA")
 
 
+def _atlas(img: Image.Image, cw: int, ch: int) -> tuple[Image.Image, int, int]:
+    """All grid cells, each padded by GUTTER pixels of its own edge colour, laid out in the same grid."""
+    g = GUTTER
+    cols, rows = img.width // cw, img.height // ch
+    pw, ph = cw + 2 * g, ch + 2 * g
+    atlas = np.zeros((rows * ph, cols * pw, 4), np.uint8)
+    arr = np.asarray(img)
+    for r in range(rows):
+        for c in range(cols):
+            cellarr = np.pad(arr[r * ch:(r + 1) * ch, c * cw:(c + 1) * cw], ((g, g), (g, g), (0, 0)), mode="edge")
+            atlas[r * ph:(r + 1) * ph, c * pw:(c + 1) * pw] = cellarr
+    return Image.fromarray(atlas, "RGBA"), pw, ph
+
+
+def _plan_sizes(img, target, n, cell):
+    from .scaling import scaled
+    if cell is None:
+        return None, target if target else (scaled(img.width, n), scaled(img.height, n))
+    cw, ch = cell
+    return (cw, ch), (scaled(cw, n), scaled(ch, n))
+
+
+def enlarge_inputs(img: Image.Image, engine, target: tuple[int, int] | None, n: float,
+                   cell: tuple[int, int] | None, resampler: str | None = None) -> list[tuple[Image.Image, float]]:
+    """The images `upscale_image` will give `engine.enlarge`, with the factor each needs, so that an AI engine can run a
+    whole batch of them in one process (`engine.prefetch`). Empty for engines without `enlarge`."""
+    if not hasattr(engine, "enlarge"):
+        return []
+    c, (tw, th) = _plan_sizes(img, target, n, cell)
+    if c is None:
+        want = engine.would_enlarge(img, tw, th, resampler) if hasattr(engine, "would_enlarge") else None
+        return [(img, want)] if want else []
+    if resampler not in (None, "default"):
+        return []
+    cw, ch = c
+    want = max(tw / cw, th / ch)
+    return [(_atlas(img, cw, ch)[0], want)] if want > 1 else []
+
+
 def upscale_image(img: Image.Image, engine, target: tuple[int, int] | None, n: float,
                   cell: tuple[int, int] | None, resampler: str | None = None) -> Image.Image:
     """Resize `img`. With `cell`, each grid cell is resized independently to round(cell*n) so that
@@ -77,17 +116,10 @@ def upscale_image(img: Image.Image, engine, target: tuple[int, int] | None, n: f
     cols, rows = img.width // cw, img.height // ch
     tcw, tch = scaled(cw, n), scaled(ch, n)
     out = Image.new("RGBA", (cols * tcw, rows * tch))
-    if hasattr(engine, "enlarge") and (resampler in (None, "default")):
+    if hasattr(engine, "enlarge") and (resampler in (None, "default")) and max(tcw / cw, tch / ch) > 1:
         g = GUTTER
-        # atlas of padded cells laid out in the same grid
-        pw, ph = cw + 2 * g, ch + 2 * g
-        atlas = np.zeros((rows * ph, cols * pw, 4), np.uint8)
-        arr = np.asarray(img)
-        for r in range(rows):
-            for c in range(cols):
-                cellarr = np.pad(arr[r * ch:(r + 1) * ch, c * cw:(c + 1) * cw], ((g, g), (g, g), (0, 0)), mode="edge")
-                atlas[r * ph:(r + 1) * ph, c * pw:(c + 1) * pw] = cellarr
-        big, s = engine.enlarge(Image.fromarray(atlas, "RGBA"))
+        atlas, pw, ph = _atlas(img, cw, ch)
+        big, s = engine.enlarge(atlas, max(tcw / cw, tch / ch))
         for r in range(rows):
             for c in range(cols):
                 box = ((c * pw + g) * s, (r * ph + g) * s, (c * pw + g + cw) * s, (r * ph + g + ch) * s)

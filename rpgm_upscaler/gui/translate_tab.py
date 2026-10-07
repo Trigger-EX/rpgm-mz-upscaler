@@ -158,5 +158,6 @@ class TranslateTab(QWidget):
             if w is not None and w.isRunning():
                 if isinstance(w, ModelWorker):
                     w.cancel()
-                w.wait(5000)
+                if not w.wait(20000):                     # never destroy a running QThread: refuse to close instead
+                    return False
         return True

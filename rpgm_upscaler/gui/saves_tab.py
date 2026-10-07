@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDia
 from ..saves.database import Names, load_names, strip_codes
 from ..saves.files import find_saves, open_save
 from ..saves.model import INVENTORY_KINDS, SaveDoc, SaveError
-from .worker import TranslateWorker
+from .theme import error_color
+from .worker import SaveLoadWorker, TranslateWorker
 
 RO = Qt.ItemIsSelectable | Qt.ItemIsEnabled
 
@@ -38,6 +39,9 @@ class SavesTab(QWidget):
         self._loading = False
         self._worker: TranslateWorker | None = None
         self._english: dict[str, str] = {}
+        self._auto_open = True            # opening a project selects its first save; the hub switches this off when it opens one itself
+        self._load_seq = 0
+        self._loader: SaveLoadWorker | None = None
         self._build()
         ctx.project_changed.connect(lambda _info: self.refresh_slots())
 
@@ -63,7 +67,7 @@ class SavesTab(QWidget):
         right = QWidget(); rv = QVBoxLayout(right); rv.setContentsMargins(0, 0, 0, 0)
         self.header = QLabel("Open a game in the Project page, or open a save file.")
         self.header.setWordWrap(True)
-        self.banner = QLabel(); self.banner.setStyleSheet("color:#b00020;font-weight:bold"); self.banner.setWordWrap(True)
+        self.banner = QLabel(); self.banner.setStyleSheet(f"color:{error_color(self)};font-weight:bold"); self.banner.setWordWrap(True)
         rv.addWidget(self.header); rv.addWidget(self.banner)
         self.tabs = QTabWidget()
         rv.addWidget(self.tabs, 1)
@@ -180,16 +184,69 @@ class SavesTab(QWidget):
         self.slots.blockSignals(False)
         if not path:
             return
-        if self._files:
+        if self._files and self._auto_open:
+            self.slots.blockSignals(True)
             self.slots.setCurrentRow(0)
-        else:
+            self.slots.blockSignals(False)
+            self.open_file(self._files[0])
+        elif not self._files:
             self.header.setText("No save files found in this game yet.")
+
+    def select_slot_for(self, path: str | Path) -> None:
+        """Highlight the slot that holds `path` without opening it again."""
+        p = Path(path)
+        for i, f in enumerate(getattr(self, "_files", [])):
+            if f == p or f.resolve() == p.resolve():
+                self.slots.blockSignals(True)
+                self.slots.setCurrentRow(i)
+                self.slots.blockSignals(False)
+                return
 
     def open_dialog(self) -> None:
         f, _ = QFileDialog.getOpenFileName(self, "Open a save file", self.ctx.path or str(Path.home()),
-                                           "Saves (*.rpgsave *.rmmzsave *.rvdata2 *.rvdata)")
+                                           "Saves (*.rpgsave *.rmmzsave *.rvdata2 *.rvdata *.rxdata)")
         if f:
-            self.open_file(f)
+            self.open_file_async(f)
+
+    def open_file_async(self, path: str | Path) -> None:
+        """Same as open_file, but the file is read on a worker thread; the tab shows 'Loading' meanwhile. If the user picks
+        another file before it finishes, only the last request is shown."""
+        if not self.maybe_discard():
+            self._restore_slot()
+            return
+        self._load_seq += 1
+        self.header.setText(f"Loading {Path(path).name}…")
+        self._set_enabled(False)
+        self._loader = SaveLoadWorker(path, self._load_seq, self)
+        self._loader.loaded.connect(self._load_done)
+        self._loader.failed.connect(self._load_failed)
+        self._loader.start()
+
+    def _load_done(self, doc, names, seq: int) -> None:
+        if seq != self._load_seq:
+            return
+        self._adopt(doc, names)
+
+    def _load_failed(self, message: str, seq: int) -> None:
+        if seq != self._load_seq:
+            return
+        QMessageBox.critical(self, "Cannot open save", message)
+        self.header.setText(str(self.doc.path) if self.doc else "Open a game in the Project page, or open a save file.")
+        self._set_enabled(self.doc is not None)
+        self._restore_slot()
+
+    def _restore_slot(self) -> None:
+        self.slots.blockSignals(True)
+        cur = self._files.index(self.doc.path) if self.doc and self.doc.path in getattr(self, "_files", []) else -1
+        self.slots.setCurrentRow(cur)
+        self.slots.blockSignals(False)
+
+    def _adopt(self, doc, names) -> None:
+        self.doc = doc
+        self.names = names
+        self._english = {}
+        self._populate()
+        self._start_translation()
 
     def open_file(self, path: str | Path) -> bool:
         if not self.maybe_discard():
@@ -199,20 +256,13 @@ class SavesTab(QWidget):
         except SaveError as e:
             QMessageBox.critical(self, "Cannot open save", str(e))
             return False
-        self.doc = doc
-        self.names = load_names(path)
-        self._english = {}
-        self._populate()
-        self._start_translation()
+        self._load_seq += 1                               # a slow background load that is still running must not replace this
+        self._adopt(doc, load_names(path))
         return True
 
     def _slot_selected(self, row: int) -> None:
         if 0 <= row < len(self._files):
-            if not self.open_file(self._files[row]):
-                self.slots.blockSignals(True)
-                cur = [f for f in self._files].index(self.doc.path) if self.doc and self.doc.path in self._files else -1
-                self.slots.setCurrentRow(cur)
-                self.slots.blockSignals(False)
+            self.open_file_async(self._files[row])
 
     # ---- population -----------------------------------------------------------------------------------
     def _label(self, kind: str, i: int) -> str:
@@ -371,6 +421,8 @@ class SavesTab(QWidget):
             return
         if self._guard(lambda: self.doc.set_variable(i, val)):
             self._mark_dirty()
+        else:
+            self._restore_cell(item, getattr(old, "text", old))
 
     def _party_edited(self, item: QTableWidgetItem) -> None:
         if self._loading or not self.doc or item.column() < 2:
@@ -409,6 +461,14 @@ class SavesTab(QWidget):
             return
         if self._guard(lambda: self.doc.set_item(kind, iid, int(item.text()))):
             self._mark_dirty()
+        else:
+            self._restore_cell(item, self.doc.inventory(kind).get(iid, ""))
+
+    def _restore_cell(self, item: QTableWidgetItem, value) -> None:
+        """A refused edit must not leave the rejected text in the table as if it had been applied."""
+        was, self._loading = self._loading, True
+        item.setText("" if value is None else str(value))
+        self._loading = was
 
     def _gold_edited(self) -> None:
         if self._loading or not self.doc or self.doc.readonly or self.gold.value() == (self.doc.gold() or 0):
@@ -515,7 +575,12 @@ class SavesTab(QWidget):
     def shutdown(self) -> bool:
         if not self.maybe_discard():
             return False
+        if self._loader is not None and self._loader.isRunning():
+            self._load_seq += 1
+            if not self._loader.wait(20000):
+                return False
         if self._worker is not None and self._worker.isRunning():
             self._worker.stop()
-            self._worker.wait(5000)
+            if not self._worker.wait(20000):
+                return False
         return True

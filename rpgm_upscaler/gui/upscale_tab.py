@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QImage, QPixmap
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QMainWindow,
                                QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox,
@@ -24,13 +24,23 @@ SCALES = ["fit", "1.5", "2", "2.5", "3", "4"]
 MAX_LOG_LINES = 5000
 
 
-def pil_to_pixmap(img: Image.Image, max_side: int = 520) -> QPixmap:
+def pil_to_pixmap(img: Image.Image, max_side: int = 520, dpr: float | None = None) -> QPixmap:
+    """A preview pixmap `max_side` device-independent pixels at most. Shrinking is smooth; a small image is enlarged by a
+    whole factor with hard pixel edges, so pixel art stays crisp instead of being blurred. `dpr` is the screen's device pixel
+    ratio (HiDPI): the pixmap holds that many real pixels per logical pixel."""
+    dpr = dpr or (QGuiApplication.primaryScreen().devicePixelRatio() if QGuiApplication.primaryScreen() else 1.0)
     img = img.convert("RGBA")
     data = img.tobytes("raw", "RGBA")
     qi = QImage(data, img.width, img.height, img.width * 4, QImage.Format_RGBA8888).copy()
     pm = QPixmap.fromImage(qi)
-    if max(pm.width(), pm.height()) > max_side:
-        pm = pm.scaled(max_side, max_side, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    limit = max(1, int(round(max_side * dpr)))
+    side = max(pm.width(), pm.height())
+    if side > limit:
+        pm = pm.scaled(limit, limit, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    elif side * 2 <= limit:
+        k = limit // side
+        pm = pm.scaled(pm.width() * k, pm.height() * k, Qt.KeepAspectRatio, Qt.FastTransformation)
+    pm.setDevicePixelRatio(dpr)
     return pm
 
 
@@ -42,8 +52,11 @@ class UpscaleTab(QWidget):
         self.worker: RunWorker | None = None
         self._plan_worker: PlanWorker | None = None
         self._preview_worker: PreviewWorker | None = None
+        self._preview_pending: int | None = None      # a file picked while a preview was still rendering
         self._busy = False
         self._build_ui()
+        self.setAcceptDrops(True)
+        self.src_edit.setAcceptDrops(False); self.out_edit.setAcceptDrops(False)
         self._load_settings()
         self.update_scale_info()
 
@@ -133,7 +146,7 @@ class UpscaleTab(QWidget):
         self.before_lbl, self.after_lbl = QLabel("before"), QLabel("after")
         for lb in (self.before_lbl, self.after_lbl):
             lb.setAlignment(Qt.AlignCenter); lb.setMinimumSize(200, 200)
-            lb.setStyleSheet("background:#2b2b2b;color:#aaa;")
+            lb.setStyleSheet("background:palette(dark);color:palette(light);")
             row.addWidget(lb)
         rv.addWidget(QLabel("Preview (select a file)"))
         rv.addLayout(row)
@@ -318,7 +331,10 @@ class UpscaleTab(QWidget):
         self.files.addItems([j.src for j in self._cat_jobs])
 
     def _file_selected(self, row: int) -> None:
-        if row < 0 or not self.plan or row >= len(self._cat_jobs) or (self._preview_worker and self._preview_worker.isRunning()):
+        if row < 0 or not self.plan or row >= len(self._cat_jobs):
+            return
+        if self._preview_worker and self._preview_worker.isRunning():
+            self._preview_pending = row               # shown as soon as the current one is done, never silently dropped
             return
         plan = self.plan
         import copy
@@ -327,7 +343,13 @@ class UpscaleTab(QWidget):
         self._preview_worker = PreviewWorker(plan, self._cat_jobs[row], self)
         self._preview_worker.done.connect(self._preview_ready)
         self._preview_worker.failed.connect(lambda m: self.after_lbl.setText("preview failed: " + m))
+        self._preview_worker.finished.connect(self._preview_finished)
         self._preview_worker.start()
+
+    def _preview_finished(self) -> None:
+        row, self._preview_pending = self._preview_pending, None
+        if row is not None and row == self.files.currentRow():
+            self._file_selected(row)
 
     def _preview_ready(self, before: Image.Image, after: Image.Image) -> None:
         self.before_lbl.setPixmap(pil_to_pixmap(before)); self.after_lbl.setPixmap(pil_to_pixmap(after))
@@ -341,8 +363,6 @@ class UpscaleTab(QWidget):
         info = detect_engine(src)
         if info is None:
             QMessageBox.critical(self, "Not a project", "No RPG Maker project found (need index.html or Game.ini)."); return
-        if info.engine == "XP":
-            QMessageBox.critical(self, "Not supported", "RPG Maker XP is detected but not supported yet."); return
         opts = self.options()
         ok, detail = engines.detect_engines({opts.engine: opts.engine_path} if opts.engine_path else None)[opts.engine]
         if not ok:
@@ -388,6 +408,18 @@ class UpscaleTab(QWidget):
         if p and Path(p).is_dir():
             QDesktopServices.openUrl(QUrl.fromLocalFile(p))
 
+    def dragEnterEvent(self, ev) -> None:  # noqa: N802
+        if ev.mimeData().hasUrls() and any(u.isLocalFile() for u in ev.mimeData().urls()):
+            ev.acceptProposedAction()
+
+    def dropEvent(self, ev) -> None:  # noqa: N802
+        for u in ev.mimeData().urls():
+            if u.isLocalFile():
+                p = Path(u.toLocalFile())
+                self.set_project(str(p if p.is_dir() else p.parent))
+                ev.acceptProposedAction()
+                return
+
     def set_project(self, path: str) -> None:
         """Called by the hub when the user opens a game."""
         self.src_edit.setText(path)
@@ -400,7 +432,13 @@ class UpscaleTab(QWidget):
         if self.worker and self.worker.isRunning():
             if QMessageBox.question(self, "Quit", "A run is in progress. Cancel and quit?") != QMessageBox.Yes:
                 return False
-            self.worker.cancel(); self.worker.wait(15000)
+            self.worker.cancel()
+            if not self.worker.wait(60000):               # a QThread destroyed while running aborts the whole process
+                QMessageBox.information(self, "Quit", "The run is still stopping. Try closing again in a moment.")
+                return False
+        for w in (self._plan_worker, self._preview_worker):   # short jobs that cannot be cancelled: let them finish
+            if w is not None and w.isRunning() and not w.wait(60000):
+                return False
         self._release_prepared()
         self._save_settings()
         return True

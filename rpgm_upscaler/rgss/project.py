@@ -1,4 +1,4 @@
-"""VX / VX Ace project metadata."""
+"""XP / VX / VX Ace project metadata."""
 from __future__ import annotations
 
 import re
@@ -62,17 +62,16 @@ def tileset_kinds(data_dir: Path, suffix: str) -> dict[str, str]:
 def load_rgss_project(path: str | Path, base: Path | None = None, info: EngineInfo | None = None) -> RgssProject:
     """`base` overrides the folder to read (the extracted tree of an encrypted game)."""
     info = info or detect_engine(path)
-    if info is None or info.engine not in ("ACE", "VX"):
-        raise RgssProjectError("not a VX / VX Ace project")
+    if info is None or info.engine not in ("ACE", "VX", "XP"):
+        raise RgssProjectError("not an XP / VX / VX Ace project")
     root = Path(base) if base else info.root
     ini_file = ci_child(root, "Game.ini")
     ini = ini_file.read_bytes().decode("cp932", errors="replace") if ini_file else ""
-    default_scripts = "Data/Scripts.rvdata2" if info.engine == "ACE" else "Data/Scripts.rvdata"
-    scripts = _ini_value(ini, "Scripts").replace("\\", "/") or default_scripts
-    suffix = ".rvdata2" if info.engine == "ACE" else ".rvdata"
+    suffix = {"ACE": ".rvdata2", "VX": ".rvdata", "XP": ".rxdata"}[info.engine]
+    scripts = _ini_value(ini, "Scripts").replace("\\", "/") or f"Data/Scripts{suffix}"
     data = ci_child(root, "Data") or root / "Data"
     p = RgssProject(root, info.engine, SCREEN[info.engine], 32, _ini_value(ini, "Title"), scripts,
-                    tileset_kinds(data, suffix))
+                    tileset_kinds(data, suffix) if info.engine != "XP" else {})
     if info.archive is not None and base is None:
         p.warnings.append(f"{info.archive.name} is encrypted; it has to be extracted first.")
     return p

@@ -90,6 +90,36 @@ def _value(text: str):
     return text
 
 
+def _translate_game_cmd(args) -> int:
+    from .translate.gamerun import GameTranslateError, Options, translate_game
+    from .translate.service import Translator
+    opts = Options(dialogue=not args.no_dialogue, database=not args.no_database, system=not args.no_system,
+                   plugin_params=not args.no_plugin_params, ocr=args.ocr, ocr_scope=args.ocr_scope, ocr_min_conf=args.ocr_min_conf,
+                   font=args.font, wrap_chars=args.wrap_chars, copy_mode="link" if args.link else "copy", overwrite=args.overwrite,
+                   workers=args.workers, memory=args.memory, keep_referenced=not args.no_keep_referenced,
+                   beam=args.beam or (1 if args.fast else 0), resume=args.resume)
+    last = {"stage": "", "pct": -1}
+
+    def prog(stage, done, total):
+        pct = done * 100 // total if total else 100
+        if stage != last["stage"] or pct >= last["pct"] + 5 or done == total:
+            last.update(stage=stage, pct=pct)
+            print(f"\r{stage:10s} {done}/{total}   ", end="", file=sys.stderr)
+
+    try:
+        res = translate_game(args.game, args.output, Translator(), opts, progress=prog)
+    except GameTranslateError as e:
+        print("error:", e, file=sys.stderr)
+        return 2
+    print(file=sys.stderr)
+    print(f"{res.engine}: {res.translated}/{res.strings} strings translated, {res.files_changed} files rewritten"
+          + (f", {res.images_changed}/{res.images_scanned} images overlaid ({res.regions} text regions)" if args.ocr else ""))
+    print(f"output: {res.out}   (review table: {res.out / '.translation' / 'report.tsv'})")
+    for w in res.warnings[:10]:
+        print("warning:", w, file=sys.stderr)
+    return 0 if not res.cancelled else 1
+
+
 def _translate_cmd(args) -> int:
     from .translate import argos
     from .translate.service import Translator
@@ -100,12 +130,21 @@ def _translate_cmd(args) -> int:
         return 0
     if items and items[0] == "install":
         last = [0]
+        which = items[1].lower() if len(items) > 1 else "argos"
 
         def prog(done, total):
             if total and done * 100 // total >= last[0] + 5:
                 last[0] = done * 100 // total
                 print(f"\rdownloading {last[0]}%", end="", file=sys.stderr)
-        print("model installed at", argos.install(progress=prog))
+        if which == "nllb":
+            from .translate import nllb
+            print("NLLB-200 600M model (about 620 MB, licence CC-BY-NC 4.0) ...", file=sys.stderr)
+            print("model installed at", nllb.install(progress=prog))
+        elif which == "argos":
+            print("model installed at", argos.install(progress=prog))
+        else:
+            print("usage: translate install [argos|nllb]", file=sys.stderr)
+            return 2
         return 0
     if items and items[0] == "import":
         if len(items) < 2:
@@ -134,13 +173,10 @@ def run_rgss_command(args, info, opts) -> int:
     from .rgss import pipeline
     from .rgss.planner import build_plan
     from .rgss.project import RgssProjectError
-    if info.engine == "XP":
-        print("RPG Maker XP games are detected but not supported yet.", file=sys.stderr)
-        return 2
     try:
         if args.cmd == "analyze":
             print(f"engine: {info.label}\nfolder: {info.root}\narchive: {info.archive.name if info.archive else 'none (loose files)'}")
-            prep = pipeline.prepare(args.game)
+            prep = pipeline.prepare(args.game, basics_only=True)
             try:
                 p = prep.project
                 print(f"screen: {p.screen[0]}x{p.screen[1]}\ntile size: {p.tile_size}\ntitle: {p.title}\nscripts: {p.scripts_path}")
@@ -179,6 +215,7 @@ def run_rgss_command(args, info, opts) -> int:
 def _unpack_scripts(args) -> int:
     from .rgss import scripts as sc
     from .rgss.archive import ArchiveError, open_archive
+    from .rgss.project import RgssProjectError
     info = detect_engine(args.game)
     if info is None or info.engine not in ("ACE", "VX", "XP"):
         print("not an RGSS (XP / VX / VX Ace) project", file=sys.stderr)
@@ -189,20 +226,22 @@ def _unpack_scripts(args) -> int:
                 print("this game has no encrypted archive", file=sys.stderr)
                 return 1
             dest = Path(args.output) if args.output else info.root / (info.archive.stem + "_extracted")
-            files = open_archive(info.archive).extract_all(dest, lambda d, t, n: print(f"\r{d}/{t} {n[-50:]:50s}", end="", file=sys.stderr))
+            with open_archive(info.archive) as arc:
+                files = arc.extract_all(dest, lambda d, t, n: print(f"\r{d}/{t} {n[-50:]:50s}", end="", file=sys.stderr))
+                for kept, ignored in arc.collisions:
+                    print(f"\nwarning: {ignored} differs from {kept} only in letter case and was not extracted", file=sys.stderr)
             print(f"\nextracted {len(files)} files to {dest}")
             return 0
-        from .rgss.project import load_rgss_project
-        base = None
-        tmp = None
-        if info.archive is not None and not (info.root / "Data").is_dir():
-            import tempfile
-            tmp = Path(tempfile.mkdtemp(prefix="rpgmhub_"))
-            open_archive(info.archive).extract_all(tmp)
-            base = tmp
+        from .rgss import pipeline
+        prep = pipeline.prepare(args.game, basics_only=True)          # only the script list is needed, not the images
         try:
-            proj = load_rgss_project(args.game, base=base, info=info)
+            proj = prep.project
             f = proj.base / proj.scripts_path.replace("\\", "/")
+            if not f.is_file() and info.archive is not None:               # Game.ini names a script file elsewhere in the archive
+                prep.cleanup()
+                prep = pipeline.prepare(args.game)
+                proj = prep.project
+                f = proj.base / proj.scripts_path.replace("\\", "/")
             arr = sc.load(f.read_bytes())
             for e in sc.listing(arr):
                 print(f"{e.index:>3}  {e.id:>8}  {e.size:>7} B  {e.title}")
@@ -214,11 +253,9 @@ def _unpack_scripts(args) -> int:
                     (dest / f"{i:03d}_{safe}.rb").write_text(sc.source(entry), encoding="utf-8")
                 print(f"extracted {len(arr)} scripts to {dest}")
         finally:
-            if tmp:
-                import shutil
-                shutil.rmtree(tmp, ignore_errors=True)
+            prep.cleanup()
         return 0
-    except (ArchiveError, sc.ScriptsError, OSError, KeyError) as e:
+    except (ArchiveError, sc.ScriptsError, RgssProjectError, OSError, KeyError) as e:
         print("error:", e, file=sys.stderr)
         return 2
 
@@ -229,6 +266,8 @@ def run_hub_command(args) -> int:
             return _unpack_scripts(args)
         if args.cmd == "translate":
             return _translate_cmd(args)
+        if args.cmd == "translate-game":
+            return _translate_game_cmd(args)
         if args.cmd == "detect":
             info = detect_engine(args.path)
             if info is None:
@@ -277,6 +316,9 @@ def run_hub_command(args) -> int:
             if args.pos:
                 x, y = (int(t) for t in args.pos.split(","))
             doc.set_position(args.map, x, y)
+        if not doc.dirty:
+            print("nothing to change (no edit options given)", file=sys.stderr)
+            return 2
         doc.save()
         print(f"saved {doc.path} (backup kept)")
         return 0

@@ -1,30 +1,31 @@
 """Background threads: analyze/plan, run, and single-image preview. Core code never touches Qt."""
 from __future__ import annotations
 
+import threading
+
 from PySide6.QtCore import QThread, Signal
 
 from ..core.imageops import load_image, upscale_image
 from ..core.planner import build_plan
 from ..core.project import load_project
-from ..core.runner import Runner
+from ..core.runner import Runner, RunResult
 from ..core.settings import Options
 from ..detect import detect_engine
+from ..rgss.pipeline import PrepareCancelled
 
 
-def _plan_for(path: str, opts: Options, mode: str):
+def _plan_for(path: str, opts: Options, mode: str, cancel=None):
     """(plan, prepared) for any supported engine; `prepared` owns a temporary extraction (VX/Ace archives)."""
     info = detect_engine(path)
-    if info is not None and info.engine in ("ACE", "VX"):
+    if info is not None and info.engine in ("ACE", "VX", "XP"):
         from ..rgss import pipeline
         from ..rgss.planner import build_plan as rgss_plan
-        prepared = pipeline.prepare(path)
+        prepared = pipeline.prepare(path, cancel=cancel)
         try:
             return rgss_plan(prepared.project, opts, mode), prepared
         except Exception:
             prepared.cleanup()
             raise
-    if info is not None and info.engine == "XP":
-        raise ValueError("RPG Maker XP is detected but not supported yet.")
     return build_plan(load_project(path), opts), None
 
 
@@ -54,19 +55,27 @@ class RunWorker(QThread):
         super().__init__(parent)
         self.path, self.out, self.opts, self.mode = path, out, opts, mode
         self.runner: Runner | None = None
+        self._cancelled = False          # a cancel that arrives while the plan is still being built must not be lost
+        self._cancel_event = threading.Event()      # also stops the unpacking of an encrypted archive
 
     def cancel(self) -> None:
+        self._cancelled = True
+        self._cancel_event.set()
         if self.runner:
             self.runner.cancel()
 
     def run(self) -> None:
         prepared = None
         try:
-            plan, prepared = _plan_for(self.path, self.opts, self.mode)
+            plan, prepared = _plan_for(self.path, self.opts, self.mode, self._cancel_event)
             for w in plan.warnings:
                 self.log.emit("warning", w)
             self.runner = Runner(plan, self.out, self.progress.emit, self.log.emit)
+            if self._cancelled:
+                self.runner.cancel()
             self.finished_run.emit(self.runner.run())
+        except PrepareCancelled:
+            self.finished_run.emit(RunResult(cancelled=True))
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
         finally:
@@ -91,6 +100,28 @@ class PreviewWorker(QThread):
             self.done.emit(before, after)
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
+
+
+class SaveLoadWorker(QThread):
+    """Opens a save file and its database names off the UI thread (a large MV save takes seconds to decompress)."""
+    loaded = Signal(object, object, int)      # doc, names, request number
+    failed = Signal(str, int)
+
+    def __init__(self, path, seq: int, parent=None):
+        super().__init__(parent)
+        self.path, self.seq = path, seq
+
+    def run(self) -> None:
+        from ..saves.database import load_names
+        from ..saves.files import open_save
+        from ..saves.model import SaveError
+        try:
+            doc = open_save(self.path)
+            self.loaded.emit(doc, load_names(self.path), self.seq)
+        except SaveError as e:
+            self.failed.emit(str(e), self.seq)
+        except Exception as e:  # noqa: BLE001  (a malformed save must not kill the thread silently)
+            self.failed.emit(f"{type(e).__name__}: {e}", self.seq)
 
 
 class TranslateWorker(QThread):
@@ -141,5 +172,29 @@ class ModelWorker(QThread):
             else:
                 path = argos.install(progress=self.progress.emit, cancel=self._cancel)
             self.done.emit(str(path))
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))
+
+
+class GameTranslateWorker(QThread):
+    """Translates a whole game into a new folder (see translate/gamerun.py)."""
+    progress = Signal(str, int, int)        # stage, done, total
+    finished_run = Signal(object)           # gamerun.Result
+    failed = Signal(str)
+
+    def __init__(self, translator, path: str, out: str, opts, parent=None):
+        super().__init__(parent)
+        import threading
+        self.translator, self.path, self.out, self.opts = translator, path, out, opts
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    def run(self) -> None:
+        from ..translate.gamerun import translate_game
+        try:
+            self.finished_run.emit(translate_game(self.path, self.out, self.translator, self.opts,
+                                                  progress=self.progress.emit, cancel=self._cancel))
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))

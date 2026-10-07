@@ -41,13 +41,20 @@ class RString(_Ext):
         try:
             return self.data.decode("utf-8")
         except UnicodeDecodeError:
+            self.was_sjis = True                      # remember, so edits are written back in the file's own encoding
             return self.data.decode("cp932", errors="replace")
 
     @text.setter
     def text(self, value: str) -> None:
         enc = self.ivars.get("E") if self.ivars else None
         legacy = not self.ivars          # Ruby 1.8 (VX) strings carry no encoding ivar
-        self.data = value.encode("utf-8") if (enc is True or not legacy or value.isascii()) else value.encode("cp932")
+        if enc is True or not legacy or value.isascii() or not getattr(self, "was_sjis", False):
+            self.data = value.encode("utf-8")
+            return
+        try:
+            self.data = value.encode("cp932")
+        except UnicodeEncodeError:                    # e.g. an accented letter in English text: UTF-8 is what the engine reads too
+            self.data = value.encode("utf-8")
 
     def __hash__(self) -> int:
         return hash(self.data)
@@ -76,6 +83,31 @@ class RBignum(int):
 class RArray(list, _Ext):
     def __hash__(self) -> int:
         return hash(tuple(self))
+
+
+class RKey:
+    """A Hash key that Python would merge with another: Ruby keeps `1`, `true` and `1.0` apart, a Python dict does not
+    (True == 1 == 1.0). Boolean and Float keys are wrapped in this on load and unwrapped on dump."""
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
+
+    def _kind(self) -> str:
+        return "bool" if isinstance(self.value, bool) else "float"
+
+    def __hash__(self) -> int:
+        return hash((self._kind(), float(self.value)))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, RKey) and other._kind() == self._kind() and float(other.value) == float(self.value)
+
+    def __repr__(self) -> str:
+        return f"RKey({self.value!r})"
+
+
+def hash_key(k):
+    return RKey(k) if isinstance(k, (bool, float)) else k
 
 
 class RHash(dict, _Ext):
@@ -247,10 +279,10 @@ class _Reader:
             return self.reg(RString(self.bytes_()))
         if c == "f":
             raw = self.bytes_()
-            txt = raw.decode("ascii")
+            txt = raw.split(b"\0")[0].decode("ascii")      # Ruby 1.9 appends raw mantissa bytes after a NUL; RFloat keeps them
             v = {"inf": math.inf, "-inf": -math.inf, "nan": math.nan}.get(txt)
             if v is None:
-                v = float(txt.split("\0")[0])
+                v = float(txt)
             return self.reg(RFloat(v, raw))
         if c == "l":
             sign = self.byte()
@@ -265,7 +297,7 @@ class _Reader:
         if c in "{}":
             h = self.reg(RHash())
             for _ in range(self.long()):
-                k = self.obj()
+                k = hash_key(self.obj())
                 h[k] = self.obj()
             if c == "}":
                 h.has_default, h.default = True, self.obj()
@@ -420,6 +452,8 @@ class _Writer:
 
     def obj(self, o) -> None:
         out = self.out
+        if type(o) is RKey:
+            o = o.value
         if o is None:
             out.append(0x30)
         elif o is True:
@@ -524,9 +558,8 @@ class _Writer:
 
 
 def _parse_raw(raw: bytes) -> float:
-    t = raw.decode("ascii")
-    return {"inf": math.inf, "-inf": -math.inf, "nan": math.nan}.get(t, None) if t in ("inf", "-inf", "nan") \
-        else float(t.split("\0")[0])
+    t = raw.split(b"\0")[0].decode("ascii")
+    return {"inf": math.inf, "-inf": -math.inf, "nan": math.nan}[t] if t in ("inf", "-inf", "nan") else float(t)
 
 
 def dumps(o: Any) -> bytes:

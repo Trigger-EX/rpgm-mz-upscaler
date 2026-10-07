@@ -46,12 +46,12 @@ class Category:
 def category_for(rel_under_web: PurePosixPath) -> Category | None:
     """rel path relative to the web root (e.g. img/faces/Actor1.png). None = not an image asset."""
     parts = rel_under_web.parts
-    if len(parts) >= 3 and parts[0] == "img":
-        folder = parts[1]
+    if len(parts) >= 3 and parts[0].lower() == "img":
+        folder = parts[1].lower()                    # games copied from Windows often have `img/Characters`
         if folder in FOLDER_RULES:
             return Category(folder, FOLDER_RULES[folder][0])
         return Category(folder, EXACT, known=False)
-    if len(parts) >= 3 and parts[0] == "effects" and parts[1] == "Texture":
+    if len(parts) >= 3 and parts[0].lower() == "effects" and parts[1].lower() == "texture":
         return Category("effects/Texture", EXACT)
     return None
 

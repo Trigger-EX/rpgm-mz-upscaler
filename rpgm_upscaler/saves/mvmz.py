@@ -197,20 +197,28 @@ class JsonSave(SaveDoc):
         m, pl = self._c("map"), self._c("player")
         if not m or not pl:
             return None
+        if pl.get("_transferring"):                       # a reserved transfer is what the engine will do on load
+            return int(pl.get("_newMapId", 0)), int(pl.get("_newX", 0)), int(pl.get("_newY", 0))
         return int(m.get("_mapId", 0)), int(pl.get("_x", 0)), int(pl.get("_y", 0))
 
     def set_position(self, map_id=None, x=None, y=None) -> None:
+        """Another map is reached by reserving a transfer: rewriting `_mapId` alone would keep the old map's events,
+        and the engine only rebuilds the map when `_newMapId` differs from the loaded one."""
         self._touch()
         m, pl = self._c("map"), self._c("player")
         if m is None or pl is None:
             raise SaveError("no map/player in this save")
-        if map_id is not None:
-            m["_mapId"] = int(map_id)
-        if x is not None:
-            pl["_x"] = pl["_realX"] = int(x)
-        if y is not None:
-            pl["_y"] = pl["_realY"] = int(y)
-        pl["_transferring"] = False
+        cur_map, cur_x, cur_y = self.position()
+        target = int(map_id) if map_id is not None else cur_map
+        tx, ty = int(x) if x is not None else cur_x, int(y) if y is not None else cur_y
+        if target != int(m.get("_mapId", 0)) or pl.get("_transferring"):
+            pl["_transferring"] = True
+            pl["_newMapId"], pl["_newX"], pl["_newY"] = target, tx, ty
+            pl.setdefault("_newDirection", pl.get("_direction", 2))
+            pl.setdefault("_fadeType", 0)
+            return
+        pl["_x"] = pl["_realX"] = tx
+        pl["_y"] = pl["_realY"] = ty
 
     def playtime(self):
         s = self._c("system")

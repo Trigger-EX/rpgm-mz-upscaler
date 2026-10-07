@@ -22,12 +22,14 @@ def _opts(a: argparse.Namespace) -> Options:
                    model=a.model or "", resamplers=res, skip=a.skip or [], movies=not a.no_movies,
                    patch=not a.no_patch, reencrypt=not a.plain_images, ui_fill=a.ui_fill,
                    anchor=a.anchor, workers=a.workers, resume=not a.overwrite,
-                   scale_windowskin=a.scale_windowskin)
+                   scale_windowskin=a.scale_windowskin,
+                   orig=tuple(int(x) for x in a.orig.lower().split("x")) if a.orig else None)
 
 
 def _add_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("game")
     p.add_argument("--target", default="1920x1080")
+    p.add_argument("--orig", metavar="WxH", help="resolution the game was made for, when it cannot be detected (e.g. a plugin lets the player pick one)")
     p.add_argument("--scale", default="fit", help="fit | number (rounded down to a multiple of 1/8)")
     p.add_argument("--engine", default="lanczos", choices=[*engines.PILLOW_ENGINES, *engines.NCNN_ENGINES])
     p.add_argument("--engine-path")
@@ -87,8 +89,30 @@ def main(argv: list[str] | None = None) -> int:
     a_tr.add_argument("items", nargs="*")
     a_tr.add_argument("--file", help="translate each line of a UTF-8 text file")
     a_tr.add_argument("--json", action="store_true")
+    a_tg = sub.add_parser("translate-game", help="translate a whole game (dialogue, database, system and plugin text) into a new folder; "
+                                                   "optionally OCR and overlay Japanese lettering in images")
+    a_tg.add_argument("game")
+    a_tg.add_argument("-o", "--output", required=True, help="new folder for the translated copy (the original is never touched)")
+    a_tg.add_argument("--no-dialogue", action="store_true", help="skip event text (messages, choices, scrolling text)")
+    a_tg.add_argument("--no-database", action="store_true", help="skip actors, items, skills, states, enemies, classes ...")
+    a_tg.add_argument("--no-system", action="store_true", help="skip game title, terms and map names")
+    a_tg.add_argument("--no-plugin-params", action="store_true", help="skip text in plugin parameters (MV/MZ)")
+    a_tg.add_argument("--ocr", action="store_true", help="also find Japanese text in images (OpenCV + Tesseract) and overlay English")
+    a_tg.add_argument("--ocr-scope", choices=["likely", "all"], default="likely",
+                      help="likely: pictures, titles, system (default); all: every image file")
+    a_tg.add_argument("--ocr-min-conf", type=float, default=60.0, help="minimum OCR confidence 0-100 (default 60)")
+    a_tg.add_argument("--font", help="TTF/OTF font for overlaid English (default: a system sans-serif)")
+    a_tg.add_argument("--wrap-chars", type=int, help="characters per message line (default: estimated from the engine)")
+    a_tg.add_argument("--memory", metavar="TSV", help="your corrections (japanese<TAB>english, e.g. an edited .translation/memory.tsv) that win over the model")
+    a_tg.add_argument("--no-keep-referenced", action="store_true", help="also translate names that scripts or plugins compare against (may break the game)")
+    a_tg.add_argument("--link", action="store_true", help="hard-link unchanged files instead of copying them (saves disk space)")
+    a_tg.add_argument("--resume", action="store_true", help="continue an earlier run in the same output folder: text is redone (cached), images already handled are kept")
+    a_tg.add_argument("--overwrite", action="store_true", help="allow a non-empty output folder")
+    a_tg.add_argument("--fast", action="store_true", help="greedy decoding (beam 1): several times faster, slightly rougher wording")
+    a_tg.add_argument("--beam", type=int, choices=[1, 2, 3, 4, 5], help="model search width (default 4; --fast is 1)")
+    a_tg.add_argument("--workers", type=int, default=0, help="parallel image workers (default: auto)")
     args = ap.parse_args(argv)
-    if args.cmd in ("detect", "saves", "translate", "unpack", "scripts"):
+    if args.cmd in ("detect", "saves", "translate", "translate-game", "unpack", "scripts"):
         from .hubcli import run_hub_command
         return run_hub_command(args)
     if args.cmd in ("analyze", "plan", "run"):

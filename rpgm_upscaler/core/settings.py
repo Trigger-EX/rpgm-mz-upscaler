@@ -25,6 +25,7 @@ class Options:
     anchor: str = "center"
     workers: int = 0
     resume: bool = True
+    orig: tuple[int, int] | None = None   # the resolution the game was authored for, when it cannot be detected
 
     def digest(self, n: float) -> str:
         d = asdict(self)
@@ -38,7 +39,7 @@ class Options:
         o = Options()
         for k, v in d.items():
             if hasattr(o, k):
-                setattr(o, k, tuple(v) if k == "target" else v)
+                setattr(o, k, tuple(v) if k in ("target", "orig") and v else v)
         return o
 
 
@@ -55,9 +56,13 @@ def load_settings() -> dict:
 
 
 def save_settings(data: dict) -> None:
+    """Merges into what is stored: every tab saves its own keys and must not erase the others'."""
     p = settings_path()
+    merged = {**load_settings(), **data}
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(data, indent=2))
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(merged, indent=2))
+        tmp.replace(p)
     except OSError:
         pass

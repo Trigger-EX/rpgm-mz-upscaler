@@ -36,7 +36,7 @@ def find_installed(src: str = "ja", dst: str = "en") -> Path | None:
     for root in roots:
         if not root.is_dir():
             continue
-        for p in sorted(root.glob(f"translate-{src}_{dst}*")):
+        for p in sorted([*root.glob(f"translate-{src}_{dst}*"), *root.glob(f"{src}_{dst}*")]):   # the real package unpacks as plain "ja_en"
             if p.is_dir() and _is_model_dir(p):
                 best = p
     return best
@@ -165,7 +165,7 @@ class ArgosBackend:
         self.dir = Path(model_dir)
         self.version = package_version(self.dir)
         self._sp = spm.SentencePieceProcessor(model_file=str(self.dir / "sentencepiece.model"))
-        self._tr = ctranslate2.Translator(str(self.dir / "model"), device="cpu", inter_threads=1)
+        self._tr = ctranslate2.Translator(str(self.dir / "model"), device="cpu", inter_threads=1, intra_threads=os.cpu_count() or 4)
         self._lock = threading.Lock()
 
     @property
@@ -176,6 +176,11 @@ class ArgosBackend:
         if not texts:
             return []
         toks = [self._sp.encode(t, out_type=str) for t in texts]
+        order = sorted(range(len(toks)), key=lambda i: len(toks[i]))          # similar lengths batch together: less padding
         with self._lock:
-            res = self._tr.translate_batch(toks, beam_size=2, max_decoding_length=160, max_batch_size=32)
-        return [self._sp.decode(r.hypotheses[0]).strip() for r in res]
+            res = self._tr.translate_batch([toks[i] for i in order], beam_size=2, max_decoding_length=160, max_batch_size=32,
+                                           no_repeat_ngram_size=4, repetition_penalty=1.1)
+        out = [""] * len(texts)
+        for i, r in zip(order, res):
+            out[i] = self._sp.decode(r.hypotheses[0]).strip()
+        return out

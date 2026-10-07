@@ -1,4 +1,4 @@
-"""Graphics/ folder rules and sprite-sheet grids for VX / VX Ace."""
+"""Graphics/ folder rules and sprite-sheet grids for XP / VX / VX Ace."""
 from __future__ import annotations
 
 from pathlib import PurePosixPath
@@ -6,6 +6,8 @@ from pathlib import PurePosixPath
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 FOLDERS = {"animations", "battlebacks1", "battlebacks2", "battlers", "characters", "faces", "parallaxes", "pictures",
            "system", "tilesets", "titles1", "titles2", "titles"}
+XP_FOLDERS = {"animations", "autotiles", "battlebacks", "battlers", "characters", "fogs", "gameovers", "icons", "panoramas", "pictures",
+              "tilesets", "titles", "transitions", "windowskins"}
 SYSTEM_CELLS = {"iconset": (24, 24), "balloon": (32, 32)}
 WINDOWSKINS = {"window"}
 _VX_TILES = {f"tile{k.lower()}": k for k in ("A1", "A2", "A3", "A4", "A5", "B", "C", "D", "E")}
@@ -31,9 +33,18 @@ def tile_kind(cat: str, stem: str, kinds: dict[str, str]) -> str | None:
     return None
 
 
-def cell_size(cat: str, stem: str, w: int, h: int, kinds: dict[str, str]) -> tuple[int, int] | None:
+def cell_size(cat: str, stem: str, w: int, h: int, kinds: dict[str, str], engine: str = "") -> tuple[int, int] | None:
     def fit(cw: int, ch: int):
         return (cw, ch) if cw > 0 and ch > 0 and w % cw == 0 and h % ch == 0 else None
+
+    if engine == "XP":                                  # RGSS1: 4x4 character sheets, 32 px tiles and autotile frames, 192 px animations
+        if cat == "characters":
+            return fit(w // 4, h // 4)
+        if cat in ("tilesets", "autotiles"):
+            return fit(32, 32)
+        if cat == "animations":
+            return fit(192, 192)
+        return None
 
     if cat == "characters":
         return fit(w // 3, h // 4) if "$" in stem else fit(w // 12, h // 8)
@@ -52,4 +63,4 @@ def cell_size(cat: str, stem: str, w: int, h: int, kinds: dict[str, str]) -> tup
 
 
 def is_windowskin(cat: str, stem: str) -> bool:
-    return cat == "system" and stem.lower() in WINDOWSKINS
+    return (cat == "system" and stem.lower() in WINDOWSKINS) or cat == "windowskins"

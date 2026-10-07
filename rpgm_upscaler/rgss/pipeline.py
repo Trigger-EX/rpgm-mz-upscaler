@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -14,6 +15,14 @@ from ..detect import detect_engine
 from .archive import open_archive
 from .planner import build_plan
 from .project import RgssProjectError, load_rgss_project
+
+
+class PrepareCancelled(RgssProjectError):
+    """The user cancelled while an encrypted archive was being unpacked."""
+
+
+# what reading a project's basics (screen, title, tilesets, script list) needs from an archive: two small files
+_BASICS = re.compile(r"^data/(tilesets|scripts)\.(rvdata2?|rxdata)$", re.I)
 
 
 class Prepared:
@@ -29,17 +38,28 @@ class Prepared:
 
 
 def prepare(game: str | Path, on_progress: Callable[[int, int, str], None] | None = None,
-            cancel: threading.Event | None = None) -> Prepared:
+            cancel: threading.Event | None = None, basics_only: bool = False) -> Prepared:
+    """`basics_only` unpacks just the files needed to read the project's settings (analyze, scripts): the images stay
+    in the archive. Raises PrepareCancelled if `cancel` is set while unpacking."""
     info = detect_engine(game)
-    if info is None or info.engine not in ("ACE", "VX"):
-        raise RgssProjectError("not a VX / VX Ace project" if info is None else f"{info.label} is not supported for upscaling")
+    if info is None or info.engine not in ("ACE", "VX", "XP"):
+        raise RgssProjectError("not an XP / VX / VX Ace project" if info is None else f"{info.label} is not supported for upscaling")
     tmp = None
     base = None
     if info.archive is not None and not (info.root / "Data").is_dir():
         tmp = Path(tempfile.mkdtemp(prefix="rpgmhub_"))
         stamp = info.archive.stat().st_mtime
-        for f in open_archive(info.archive).extract_all(tmp, on_progress, cancel):
-            os.utime(f, (stamp, stamp))               # stable mtimes, so a resumed run recognises finished work
+        try:
+            with open_archive(info.archive) as arc:
+                for f in arc.extract(tmp, (lambda n: bool(_BASICS.match(n.replace("\\", "/")))) if basics_only else None,
+                                     on_progress, cancel):
+                    os.utime(f, (stamp, stamp))       # stable mtimes, so a resumed run recognises finished work
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        if cancel is not None and cancel.is_set():
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise PrepareCancelled("cancelled")
         # keep loose files that sit next to the archive (Game.ini, audio ...); archived files win
         for f in info.root.iterdir():
             if f.is_file() and f.suffix.lower() not in (".rgss3a", ".rgss2a", ".rgssad"):

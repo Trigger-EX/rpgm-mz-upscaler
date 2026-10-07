@@ -123,7 +123,7 @@ class Glossary:
     def exact(self, text: str) -> str | None:
         return self.entries.get(normalize(text).strip())
 
-    def translate(self, text: str) -> tuple[str | None, float]:
+    def translate(self, text: str, romaji: bool = True) -> tuple[str | None, float]:
         """Longest-match segmentation. Returns (english, confidence); (None, 0) unless every Japanese chunk is covered
         by the glossary or is kana-only (romanised). Confidence: 1.0 exact, 0.8 fully segmented, 0.5 if romaji was used."""
         text = normalize(text).strip()
@@ -172,6 +172,8 @@ class Glossary:
                                 and kana_only(tok[j]) and (("\u30a0" <= tok[j] <= "\u30ff") == kata or tok[j] == "ー"):
                             j += 1
                         if j > i and (kata or whole_kana):    # hiragana runs inside real sentences are never guessed
+                            if not romaji:                    # running text: leave it to the model rather than transliterate
+                                return None, 0.0
                             words.append(romanize(tok[i:j]))
                             used_romaji = True
                             i = j

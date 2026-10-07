@@ -179,5 +179,73 @@ def test_cli_rgss(tmp_path, capsys):
     assert cli_main(["run", str(g), "-o", str(tmp_path / "o2"), "--mode", "stock640"]) == 0
     loose = make_ace(tmp_path / "loose")
     assert cli_main(["unpack", str(loose)]) == 1
-    xp = tmp_path / "xp"; (xp / "Data").mkdir(parents=True); (xp / "Game.ini").write_text("[Game]\nLibrary=RGSS104E.dll\n")
-    assert cli_main(["plan", str(xp)]) == 2
+
+
+def test_analyze_and_scripts_only_unpack_the_basics_and_cancel_stops(tmp_path):
+    import threading
+    from rpgm_upscaler.rgss import pipeline
+    g = make_ace(tmp_path / "g", ace=True, archive=True)
+    prep = pipeline.prepare(g, basics_only=True)
+    try:
+        files = sorted(p.relative_to(prep.project.base).as_posix() for p in prep.project.base.rglob("*") if p.is_file())
+        assert not any(f.startswith("Graphics") for f in files) and any(f.lower().startswith("data/scripts") for f in files)
+        assert prep.project.screen and prep.project.title == "Fake Ace"
+    finally:
+        prep.cleanup()
+    ev = threading.Event(); ev.set()
+    with pytest.raises(pipeline.PrepareCancelled):
+        pipeline.prepare(g, cancel=ev)
+
+
+def test_installed_rtp_is_found_and_added_to_mkxp_json(tmp_path, monkeypatch):
+    from rpgm_upscaler.rgss import patch
+    rtp = tmp_path / "rtps" / "RPGVXAce"
+    (rtp / "Graphics").mkdir(parents=True)
+    monkeypatch.setenv("RPGM_RTP", str(tmp_path / "rtps"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert patch.find_rtp("rpgvxace", "ACE") == rtp and patch.find_rtp("RPGVX", "VX") is None
+    g = make_ace(tmp_path / "g", ace=True)
+    assert patch.rtp_names(g) == ["RPGVXAce"]
+    from rpgm_upscaler.core.settings import Options
+    from rpgm_upscaler.rgss.planner import build_plan
+    from rpgm_upscaler.rgss.project import load_rgss_project
+    plan = build_plan(load_rgss_project(g), Options(), "hires")
+    out = tmp_path / "out"; out.mkdir()
+    patch.apply_hires(plan, out)
+    assert json.loads((out / "mkxp.json").read_text())["RTP"] == [str(rtp)]
+
+
+# ---- RPG Maker XP ----------------------------------------------------------------------------------
+@pytest.mark.parametrize("archive", [False, True])
+def test_xp_game_is_detected_planned_and_upscaled_as_a_hires_pack(tmp_path, archive):
+    from rpgm_upscaler.detect import detect_engine
+    from tests.fakeace import make_xp
+    g = make_xp(tmp_path / "xp", archive=archive)
+    info = detect_engine(g)
+    assert info.engine == "XP" and (info.archive is not None) == archive
+    prep = pipeline.prepare(g)
+    try:
+        plan = build_plan(prep.project, Options(), "hires")
+        assert prep.project.screen == (640, 480) and plan.scale.n == 2.25
+        jobs = {j.src: j for j in plan.jobs}
+        assert jobs["Graphics/Characters/Hero.png"].cell == (32, 48)                 # 4x4 sheet
+        assert jobs["Graphics/Tilesets/Town.png"].cell == (32, 32) and jobs["Graphics/Autotiles/Grass.png"].cell == (32, 32)
+        assert jobs["Graphics/Animations/Fire.png"].cell == (192, 192)
+        assert jobs["Graphics/Icons/Sword.png"].cell is None and jobs["Graphics/Titles/Title.png"].cell is None
+        assert "Graphics/Windowskins/Skin.png" in plan.skipped_windowskins and "Graphics/Windowskins/Skin.png" not in jobs
+        assert not any("unknown folder" in w for w in plan.warnings)
+        with pytest.raises(ValueError, match="640x480"):
+            build_plan(prep.project, Options(), "stock640")
+    finally:
+        prep.cleanup()
+    out = tmp_path / "out"
+    assert cli_main(["run", str(g), "-o", str(out), "--no-movies"]) == 0
+    assert imageops_size(out / "Hires/Graphics/Characters/Hero.png") == (288, 432)   # 128*2.25, 192*2.25
+    cfg = json.loads((out / "mkxp.json").read_text())
+    assert cfg["rgssVersion"] == 1 and cfg["enableHires"] and cfg["textureScalingFactor"] == 2.25
+    assert "Standard" in (out / "README-HUB.txt").read_text()
+
+
+def imageops_size(p):
+    with Image.open(p) as im:
+        return im.size

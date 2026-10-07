@@ -20,7 +20,7 @@ class ActorView:
 
 
 INVENTORY_KINDS = ("items", "weapons", "armors")
-MAX_GOLD = {"MV": 99999999, "MZ": 99999999, "ACE": 99999999, "VX": 9999999}
+MAX_GOLD = {"MV": 99999999, "MZ": 99999999, "ACE": 99999999, "VX": 9999999, "XP": 9999999}
 
 
 class SaveDoc:

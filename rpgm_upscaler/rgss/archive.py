@@ -1,6 +1,8 @@
 """RGSS encrypted archives: XP/VX (.rgssad / .rgss2a, v1) and VX Ace (.rgss3a, v3). Read, extract and (for tests) pack."""
 from __future__ import annotations
 
+import mmap
+import os
 import struct
 import threading
 from dataclasses import dataclass
@@ -27,8 +29,8 @@ def _adv(k: int) -> int:
     return (k * 7 + 3) & M32
 
 
-def _crypt_data(data: bytes, key: int) -> bytes:
-    """XOR little-endian words with a rolling key; the trailing partial word uses the low bytes."""
+def _crypt_data_py(data: bytes, key: int) -> bytes:
+    """Reference implementation: XOR little-endian words with a rolling key; the trailing partial word uses the low bytes."""
     n = len(data)
     words = n // 4
     out = bytearray(n)
@@ -43,6 +45,32 @@ def _crypt_data(data: bytes, key: int) -> bytes:
     for i in range(words * 4, n):
         out[i] = data[i] ^ ((k >> (8 * (i - words * 4))) & 0xFF)
     return bytes(out)
+
+
+def _crypt_data(data: bytes | memoryview, key: int) -> bytes:
+    """Same cipher, vectorised: with k(i+1) = 7*k(i) + 3 (mod 2^32), k(i) = 7^i*key + 3*sum(7^j, j<i), computed with
+    wrapping uint32 arithmetic, so there is no Python int per word. Must equal `_crypt_data_py` (tests check this)."""
+    import numpy as np
+    n = len(data)
+    words = n // 4
+    if words == 0:
+        return _crypt_data_py(bytes(data), key)
+    with np.errstate(over="ignore"):
+        pw = np.empty(words, dtype=np.uint32)             # 7^i
+        pw[0] = 1
+        if words > 1:
+            pw[1:] = 7
+            np.cumprod(pw, out=pw)
+        csum = np.cumsum(pw, dtype=np.uint32)             # sum of 7^j for j <= i
+        sums = np.empty(words, dtype=np.uint32)           # sum of 7^j for j < i
+        sums[0] = 0
+        sums[1:] = csum[:-1]
+        keys = pw * np.uint32(key & M32) + np.uint32(3) * sums
+        vals = np.frombuffer(data, dtype="<u4", count=words)
+        head = (vals ^ keys).astype("<u4").tobytes()
+        k_next = (int(pw[-1]) * 7 * (key & M32) + 3 * int(csum[-1])) & M32      # key after the last full word
+    tail = bytes(data[words * 4:])
+    return head + bytes(b ^ ((k_next >> (8 * i)) & 0xFF) for i, b in enumerate(tail))
 
 
 def _decode_name(raw: bytes) -> str:
@@ -66,16 +94,44 @@ def safe_relpath(name: str) -> PurePosixPath:
 
 
 class Archive:
+    """The file is memory-mapped, not read: a 1 GB archive costs only the pages that are actually touched."""
+
     def __init__(self, path: str | Path):
         self.path = Path(path)
-        self.buf = self.path.read_bytes()
-        if self.buf[:7] != MAGIC or len(self.buf) < 8:
+        with open(self.path, "rb") as f:
+            try:
+                self.buf = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            except ValueError:                                  # an empty file cannot be mapped
+                raise ArchiveError(f"{self.path.name} is not an RGSS archive (empty file)") from None
+        if len(self.buf) < 8 or self.buf[:7] != MAGIC:
+            self.close()
             raise ArchiveError(f"{self.path.name} is not an RGSS archive (bad header)")
         self.version = self.buf[7]
         if self.version not in (1, 3):
             raise ArchiveError(f"unsupported RGSS archive version {self.version}")
-        self.entries: list[Entry] = self._parse()
-        self._by_name = {e.name.lower(): e for e in self.entries}
+        try:
+            self.entries: list[Entry] = self._parse()
+        except Exception:
+            self.close()
+            raise
+        self._by_name: dict[str, Entry] = {}
+        self.collisions: list[tuple[str, str]] = []            # (kept, ignored): names that differ only in letter case
+        for e in self.entries:
+            kept = self._by_name.setdefault(e.name.lower(), e)
+            if kept is not e:
+                self.collisions.append((kept.name, e.name))
+
+    def close(self) -> None:
+        try:
+            self.buf.close()
+        except (BufferError, ValueError):
+            pass
+
+    def __enter__(self) -> "Archive":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     def _u32(self, pos: int) -> int:
         if pos + 4 > len(self.buf):
@@ -129,18 +185,35 @@ class Archive:
 
     def extract_all(self, dest: str | Path, progress: Callable[[int, int, str], None] | None = None,
                     cancel: threading.Event | None = None) -> list[Path]:
+        return self.extract(dest, None, progress, cancel)
+
+    def extract(self, dest: str | Path, only: Callable[[str], bool] | None = None,
+                progress: Callable[[int, int, str], None] | None = None, cancel: threading.Event | None = None) -> list[Path]:
+        """Write the entries `only` accepts (all by default). When two names differ only in letter case the first one wins,
+        as in the lookup `read` does; nothing is ever written through a symlink that already exists in `dest`."""
         dest = Path(dest)
+        root = dest.resolve()
+        chosen = [e for e in self.entries if self._by_name[e.name.lower()] is e and (only is None or only(e.name))]
         out = []
-        for i, e in enumerate(self.entries):
+        for i, e in enumerate(chosen):
             if cancel is not None and cancel.is_set():
                 break
             rel = safe_relpath(e.name)
             target = dest.joinpath(*rel.parts)
+            cur = dest
+            for part in rel.parts[:-1]:                         # a symlinked folder would send the file somewhere else
+                cur = cur / part
+                if cur.is_symlink():
+                    raise ArchiveError(f"refusing to extract {e.name!r}: {cur} is a symbolic link")
             target.parent.mkdir(parents=True, exist_ok=True)
+            if root not in target.parent.resolve().parents and target.parent.resolve() != root:
+                raise ArchiveError(f"refusing to extract {e.name!r} outside {dest}")
+            if target.is_symlink():                             # replace the link itself, never write through it
+                target.unlink()
             target.write_bytes(_crypt_data(self.buf[e.offset:e.offset + e.size], e.key))
             out.append(target)
             if progress:
-                progress(i + 1, len(self.entries), e.name)
+                progress(i + 1, len(chosen), e.name)
         return out
 
 

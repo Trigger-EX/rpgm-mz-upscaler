@@ -5,14 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rpgm-upscaler"
 version = "0.1.0"
-description = "Upscale an RPG Maker MV/MZ game to 1920x1080 (GUI + CLI)"
+description = "RPGM Hub: upscale, edit saves of and translate offline RPG Maker MV, MZ, VX Ace and VX games (GUI + CLI)"
 requires-python = ">=3.10"
 license = { text = "GPL-3.0-or-later" }
 dependencies = ["Pillow>=10", "numpy>=1.26"]
 
 [project.optional-dependencies]
-gui = ["PySide6-Essentials>=6.6"]
+gui = ["PySide6-Essentials>=6.6,<7"]
 translate = ["ctranslate2>=4,<5", "sentencepiece>=0.2,<0.3"]
+ocr = ["opencv-python-headless>=4.8,<5"]
+all = ["rpgm-upscaler[gui,translate,ocr]"]
+dev = ["pytest>=8"]
+bundle = ["pyinstaller>=6"]
 
 [project.scripts]
 rpgm-upscaler = "rpgm_upscaler.__main__:main"
