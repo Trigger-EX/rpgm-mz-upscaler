@@ -11,16 +11,18 @@ from ..detect import EngineInfo, detect_engine
 from ..saves.files import find_saves
 from .gametranslate_tab import GameTranslateTab
 from .saves_tab import SavesTab
+from .setup_page import SetupPage
 from .translate_tab import TranslateTab
 from .upscale_tab import UpscaleTab
 
-PAGES = ["Project", "Upscale", "Saves", "Translate game", "Translation", "Log"]
+PAGES = ["Project", "Upscale", "Saves", "Translate game", "Translation", "Setup", "Log"]
 
 
 class HubContext(QObject):
     """State shared by the pages: the open game and the (lazily created) offline translator."""
     project_changed = Signal(object)        # EngineInfo | None
     log = Signal(str, str)                  # level, message
+    setup_changed = Signal()                # a package or model was installed, or the Python environment changed
 
     def __init__(self, translator=None):
         super().__init__()
@@ -131,8 +133,11 @@ class HubWindow(QMainWindow):
         self.saves = SavesTab(self.ctx)
         self.game_translate = GameTranslateTab(self.ctx)
         self.translation = TranslateTab(self.ctx)
+        self.setup = SetupPage(self.ctx)
+        self.ctx.setup_changed.connect(self.translation.refresh)
+        self.ctx.setup_changed.connect(self.game_translate.refresh_model)
         self.log_box = QPlainTextEdit(); self.log_box.setReadOnly(True); self.log_box.setMaximumBlockCount(5000)
-        for w in (self.project_page, self.upscale, self.saves, self.game_translate, self.translation, self.log_box):
+        for w in (self.project_page, self.upscale, self.saves, self.game_translate, self.translation, self.setup, self.log_box):
             self.stack.addWidget(w)
         self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.sidebar.setCurrentRow(0)
@@ -198,7 +203,7 @@ class HubWindow(QMainWindow):
             self.open_project(str(p))
 
     def closeEvent(self, ev) -> None:  # noqa: N802
-        ok = all(t.shutdown() for t in (self.saves, self.upscale, self.game_translate, self.translation))
+        ok = all(t.shutdown() for t in (self.saves, self.upscale, self.game_translate, self.translation, self.setup))
         if ok and self.ctx.path:
             from ..core.settings import save_settings
             save_settings({"last_project": self.ctx.path})
