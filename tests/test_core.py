@@ -411,3 +411,39 @@ console.log(JSON.stringify({ errors, status: o.statusWidth(), win: o.windowWidth
     assert not res["errors"], res["errors"]
     assert res["status"] == round(120 * n) and res["win"] == round(400 * n) and res["face"] == round(144 * n) and res["main"] == round(240 * n)
     assert res["vol"] == 20 and res["page"] == 4 and res["zero"] == 0                    # not pixel sizes
+
+
+def test_patch_rewrites_size_locals_in_rect_methods(tmp_path):
+    node = shutil.which("node") or "/opt/node22/bin/node"
+    if not (shutil.which("node") or Path(node).exists()):
+        pytest.skip("needs node")
+    g = make_game(tmp_path / "g", "MZ")
+    plan = build_plan(load_project(g), Options(workers=1, movies=False))
+    (tmp_path / "plugin.js").write_text(patcher.render_plugin(plan, "lanczos"))
+    (tmp_path / "run.js").write_text("""
+const vm = require("vm"), fs = require("fs");
+const errors = [];
+const ctx = { console: { error: (...a) => errors.push(a.join(" ")), warn() {}, info() {}, log() {} }, Utils: { RPGMAKER_NAME: "MZ" } };
+ctx.window = ctx; ctx.globalThis = ctx;
+ctx.Graphics = { boxWidth: 816 };
+ctx.Rectangle = function (x, y, w, h) { this.x = x; this.y = y; this.width = w; this.height = h; };
+const so = function () {}; so.prototype.optionsWindowRect = eval("(function() {\\n    const n = 3;\\n    const ww = 400;\\n    const wh = this.calc(n);\\n    const wx = (Graphics.boxWidth - ww) / 2;\\n    return new Rectangle(wx, 0, ww, wh);\\n})");
+so.prototype.calc = function (n) { return n * 10; };
+ctx.Scene_Options = so;
+const sb = function () {}; sb.prototype.partyCommandWindowRect = eval("(function() {\\n    const ww = 192;\\n    return somethingFromAPlugin + ww;\\n})");
+ctx.Scene_Battle = sb;
+const stubs = {};
+const scope = new Proxy(ctx, { has: (t, k) => k !== "somethingFromAPlugin", get: (t, k) => typeof k === "symbol" ? undefined : k in t ? t[k] : k in globalThis ? globalThis[k] : (stubs[k] ||= class {}) });
+vm.createContext(ctx);
+ctx.eval = (c) => vm.runInContext(c, ctx);                 // indirect eval runs in the page's global scope, like a browser
+vm.runInContext("with (scope) {" + fs.readFileSync(process.argv[2], "utf8") + "}", Object.assign(ctx, { scope }));
+const r = new ctx.Scene_Options().optionsWindowRect();
+let fallback = "none";
+try { new ctx.Scene_Battle().partyCommandWindowRect(); } catch (e) { fallback = e.constructor.name; }
+console.log(JSON.stringify({ errors, ww: r.width, wh: r.height, fallback }));
+""")
+    r = subprocess.run([node, str(tmp_path / "run.js"), str(tmp_path / "plugin.js")], capture_output=True, text=True)
+    res = json.loads(r.stdout)
+    assert not res["errors"], res["errors"]
+    assert res["ww"] == round(400 * plan.scale.n) and res["wh"] == 30                       # width rewritten; the computed height is untouched
+    assert res["fallback"] == "ReferenceError"                                             # a method that cannot run as a copy falls back to the original

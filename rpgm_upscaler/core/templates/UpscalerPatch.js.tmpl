@@ -264,6 +264,37 @@ if (src(Sprite_Actor, "setActorHome")) {
         }
     }
     console.info(TAG, "fixed-size methods scaled:", scaled);
+
+    // Rect/size methods that keep a size in a local: `const ww = 400;` (Scene_Options), 600 (Scene_Name), 360 (map name), 192 (battle
+    // commands), `maxWidth = 96` (choice list). The number is rewritten in a copy of the method; if the copy cannot run (a plugin's
+    // override closes over something) the original is used instead.
+    const LOCAL = /\b((?:const|let|var)\s+(?:ww|wh|bw|bh|extra|maxWidth|maxHeight|width|height)\s*=\s*)(\d+)(\s*;)/g;
+    let rewritten = 0;
+    for (const key of Object.getOwnPropertyNames(globalThis)) {
+        if (!/^(Window|Scene)_/.test(key)) continue;
+        let cls;
+        try { cls = globalThis[key]; } catch (e) { continue; }
+        if (typeof cls !== "function" || !cls.prototype) continue;
+        for (const m of Object.getOwnPropertyNames(cls.prototype)) {
+            if (!/(Rect|Width|Height)$/.test(m)) continue;
+            const d = Object.getOwnPropertyDescriptor(cls.prototype, m);
+            if (!d || typeof d.value !== "function") continue;
+            const text = String(d.value);
+            if (!text.startsWith("function") || !LOCAL.test(text)) { LOCAL.lastIndex = 0; continue; }
+            LOCAL.lastIndex = 0;
+            let copy;
+            try {
+                copy = (0, eval)("(" + text.replace(LOCAL, (all, head, num, tail) => +num === 0 ? all : head + R(+num) + tail) + ")");
+            } catch (e) { warn("could not rewrite " + key + "." + m + ": " + e); continue; }
+            const orig = d.value;
+            cls.prototype[m] = function () {
+                try { return copy.apply(this, arguments); }
+                catch (e) { if (e instanceof ReferenceError) return orig.apply(this, arguments); throw e; }
+            };
+            rewritten++;
+        }
+    }
+    console.info(TAG, "size locals rewritten:", rewritten);
 }
 
 console.info(TAG, "loaded, world scale x" + N, isMZ ? "(MZ)" : "(MV)");
