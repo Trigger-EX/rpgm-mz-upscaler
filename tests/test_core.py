@@ -190,6 +190,38 @@ def test_patch_idempotent_and_plugin_syntax(tmp_path):
             assert r.returncode == 0, r.stderr
 
 
+def test_patch_survives_mz19_getter_metrics(tmp_path):
+    """MZ 1.9+ computes ImageManager.iconWidth etc. from $dataSystem, which does not exist when plugins load."""
+    node = shutil.which("node") or "/opt/node22/bin/node"
+    if not (shutil.which("node") or Path(node).exists()):
+        pytest.skip("needs node")
+    g = make_game(tmp_path / "g", "MZ")
+    _run(g, tmp_path / "out")
+    plan = build_plan(load_project(g), Options(workers=1, movies=False))
+    (tmp_path / "plugin.js").write_text(patcher.render_plugin(plan, "lanczos"))
+    (tmp_path / "run.js").write_text("""
+const vm = require("vm"), fs = require("fs");
+const errors = [];
+const ctx = { console: { error: (...a) => errors.push(a.join(" ")), warn() {}, info() {}, log() {} } };
+ctx.Utils = { RPGMAKER_NAME: "MZ" };
+ctx.ImageManager = {};
+for (const [name, base] of [["iconWidth", 32], ["iconHeight", 32], ["faceWidth", 144], ["faceHeight", 144]])
+    Object.defineProperty(ctx.ImageManager, name, { get() { if (!("iconSize" in ctx.$dataSystem)) return base; return base; }, configurable: true });
+ctx.window = ctx;
+const stubs = {};                                       // any other engine global becomes an empty class
+const scope = new Proxy(ctx, { has: () => true, get: (t, k) => typeof k === "symbol" ? undefined : k in t ? t[k] : k in globalThis ? globalThis[k] : (stubs[k] ||= class {}) });
+vm.createContext(ctx);
+vm.runInContext("with (scope) {" + fs.readFileSync(process.argv[2], "utf8") + "}", Object.assign(ctx, { scope }));
+ctx.$dataSystem = {};                                   // data is loaded after the plugins ran
+const out = { errors, icon: ctx.ImageManager.iconWidth, face: ctx.ImageManager.faceHeight };
+console.log(JSON.stringify(out));
+""")
+    r = subprocess.run([node, str(tmp_path / "run.js"), str(tmp_path / "plugin.js")], capture_output=True, text=True)
+    res = json.loads(r.stdout)
+    assert not res["errors"], res["errors"]
+    assert res["icon"] == round(32 * plan.scale.n) and res["face"] == round(144 * plan.scale.n)
+
+
 def test_plain_images_option(tmp_path):
     g = make_game(tmp_path / "g", "MZ", encrypted=True)
     plan, res = _run(g, tmp_path / "out", reencrypt=False)

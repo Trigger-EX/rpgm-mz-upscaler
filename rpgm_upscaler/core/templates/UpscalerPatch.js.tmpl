@@ -27,7 +27,11 @@ function scaleRet(cls, name) {
 }
 function scaleStatic(cls, props) {
     for (const p of props) {
-        if (cls && typeof cls[p] === "number") cls[p] = R(cls[p]);
+        const d = cls && Object.getOwnPropertyDescriptor(cls, p);
+        if (d && d.get) {                     // MZ 1.9+: getters that read $dataSystem, which does not exist yet
+            const g = d.get;
+            Object.defineProperty(cls, p, { ...d, get() { return R(g.call(this)); } });
+        } else if (cls && typeof cls[p] === "number") cls[p] = R(cls[p]);
         else warn("missing static " + p);
     }
 }

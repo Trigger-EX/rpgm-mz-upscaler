@@ -17,7 +17,9 @@ Sandbox build recipe for mkxp-z: apt libs + SDL_sound v2.0.4 from git (plus `sdl
 GUI: apt `libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3` make the hub start headless.
 
 ## Open questions
-- MZ untested against a real engine: its core scripts are proprietary and not public (not cloned). Needs an MZ game's `js/` folder from the user.
+- MZ: real MZ 1.9/1.10 games now boot to Scene_Title/Splash patched (fixed the MZ 1.9+ getter abort in `scaleStatic`), but only with placeholder images, no audio and a stand-in font, so nothing visual is verified yet. `samples/` (git-ignored) holds the test games; the boot harness lived outside the repo (`/home/user/omori_run/boot.js`).
+- RPG Maker VX Ace sample 'Crysalis' (rpgmakerweb.com free contents) runs in real mkxp-z with the Hires pack and the official RTP (`"RTP": [path]` in mkxp.json).
+- Open: President Chainsaw (MV) has a resolution-option plugin (`MUSH_MenuOptionScreenResolution`); unclear the plan handles its runtime choice.
 - Still no real VX/Ace commercial game, `.rgss3a`, or stock RGSS (stock640 mode) run. XP unsupported.
 - Remote branch `ccr-8563ced6-1lhmz8` is merged but still on GitHub.
 
