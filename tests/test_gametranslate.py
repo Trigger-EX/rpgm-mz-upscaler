@@ -280,3 +280,48 @@ def test_translation_memory_wins_and_is_exported(tmp_path, tr):
     res = run(g, tmp_path / "out", tr, memory=str(mem))
     assert "What lovely weather!" in (tmp_path / "out/data/Map001.json").read_text(encoding="utf-8")
     assert "japanese\tenglish" in (tmp_path / "out/.translation/memory.tsv").read_text(encoding="utf-8")
+
+
+def test_plugin_control_codes_with_text_arguments_survive(tr):
+    """Games with standing-picture plugins write \\F[name] \\FF[pose] \\AA[x]; the model must never see or touch them."""
+    DICT["[[0]][[1]][[2]]今日はいい天気ですね。"] = "Nice weather today, isn't it?"
+    src = "\\F[reia_normal]\\FF[kuzeru_tameiki]\\AA[FF]今日はいい天気ですね。"
+    out = tr.translate_many([src], romaji=False)[0].text
+    assert out == "\\F[reia_normal]\\FF[kuzeru_tameiki]\\AA[FF]Nice weather today, isn't it?"
+
+
+def test_dropped_placeholders_are_recovered_at_the_edges(tr):
+    class Dropper(DictBackend):
+        def translate_batch(self, texts):
+            import re
+            return [re.sub(r"\[\[\d+\]\]", "", "Hello there friend") for _ in texts]       # a model that loses every placeholder
+    tr._backend = Dropper()
+    out = tr.translate_many(["\\C[2]こんにちは\\C[0]"], romaji=False)[0].text
+    assert out.startswith("\\C[2]") and "Hello there friend" in out and out.endswith("\\C[0]")
+
+
+def test_repeated_interjections_are_squashed():
+    from rpgm_upscaler.translate.detect import squash_repeats
+    assert squash_repeats("Put it on, please, please, please, please.") == "Put it on, please, please."
+
+
+def test_name_codes_survive_a_model_that_drops_placeholders(tr):
+    class Dropper(DictBackend):
+        def translate_batch(self, texts):
+            import re
+            # forgets every [[n]] placeholder but copies the name-like stand-in for \N[n] through
+            return [f"Did {re.search('Aldric', t).group(0) if 'Aldric' in t else 'someone'} help me?" for t in texts]
+    tr._backend = Dropper()
+    out = tr.translate_many(["もしかして、\\N[4]が助けてくれたの？"], romaji=False)[0].text
+    assert "\\N[4]" in out and "Aldric" not in out
+
+
+def test_printf_placeholders_in_battle_messages_survive(tr):
+    class Dropper(DictBackend):
+        def translate_batch(self, texts):
+            import re
+            names = re.findall(r"(Aldric|Bryn)", " ".join(texts))
+            return [f"{names[0] if names else 'X'} used {names[1] if len(names) > 1 else 'it'}!" for _ in texts]
+    tr._backend = Dropper()
+    out = tr.translate_many(["%1は%2を使った！"], romaji=False)[0].text
+    assert out == "%1 used %2!"

@@ -58,7 +58,7 @@ class Collected:
 
 _CTRL_W = [(re.compile(r"\\[Nn]\[\d+\]"), "NNNNNN"), (re.compile(r"\\[Vv]\[\d+\]"), "000"), (re.compile(r"\\[Ii]\[\d+\]"), "XX"),
            (re.compile(r"\\[Pp]\[\d+\]"), "NNNNNN"), (re.compile(r"\\G"), "G")]
-_CTRL_ZERO = re.compile(r"\\[A-Za-z]+\[\d*\]|\\[A-Za-z]|\\[.|!><^${}]|\\\\")
+_CTRL_ZERO = re.compile(r"\\[A-Za-z]+\[[^\]\n]*\]|\\[A-Za-z]+|\\[.|!><^${}]|\\\\")
 
 
 def visible_len(s: str) -> int:

@@ -11,7 +11,7 @@ from typing import Callable
 
 from . import argos, nllb
 from .cache import Cache
-from .detect import codes_intact, soften_punct, is_japanese, normalize, protect, restore, split_sentences
+from .detect import codes_intact, soften_punct, squash_repeats, is_japanese, normalize, protect, restore, split_sentences
 from .glossary import Glossary
 
 
@@ -32,6 +32,9 @@ def config_dir() -> Path:
 
 def cache_path() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "rpgm-upscaler" / "translate.sqlite"
+
+
+PIPELINE = "+p5"      # bump when protection/splitting rules change so stale cached results are not reused
 
 
 class Translator:
@@ -149,7 +152,7 @@ class Translator:
         backend = self.backend if pending else None
         todo = list(pending)
         if backend is not None:
-            tag = backend.tag
+            tag = backend.tag + PIPELINE
             fresh: list[str] = []
             for t in todo:
                 hit = self.cache.get(t, tag)
@@ -195,7 +198,7 @@ class Translator:
         joined = " ".join(p for p in pieces if p).strip()
         if not codes_intact(joined, len(codes)):
             joined = self._retry_without_codes(backend, t, codes)
-        return restore(joined, codes).replace("⁇", "").replace("  ", " ").strip()
+        return squash_repeats(restore(joined, codes).replace("⁇", "").replace("  ", " ")).strip()
 
     @staticmethod
     def _usable(en: str, src: str) -> bool:
@@ -210,15 +213,48 @@ class Translator:
         protected = soften_punct(protected)
         return codes, protected, split_sentences(protected) or [protected]
 
-    @staticmethod
-    def _retry_without_codes(backend, text: str, codes: list[str]) -> str:
-        """The model dropped or invented a placeholder: translate the text without codes, then put back the codes that
-        started or ended it (colour/format switches usually do) and drop the rest rather than guess where they went."""
+    _NAMES = ["Aldric", "Bryn", "Calyx", "Dorian", "Elowen", "Fenwick", "Garrick", "Hollis"]
+
+    @classmethod
+    def _retry_without_codes(cls, backend, text: str, codes: list[str]) -> str:
+        """The model dropped or invented a placeholder. Retry with name codes (\\N[1]) and number codes (\\V[1]) replaced by
+        a name-like / number-like stand-in that models copy through, then swapped back. Formatting codes that started or ended
+        the text (colour switches, picture codes) are put back at the edges; any other code is dropped rather than guessed."""
         protected, found = protect(normalize(text))
-        lead = re.match(r"^((?:\[\[\d+\]\]\s*)*)", protected).group(1)
-        trail = re.search(r"((?:\s*\[\[\d+\]\])*)$", protected).group(1)
-        bare = soften_punct(re.sub(r"\[\[\d+\]\]", "", protected))
+        content = lambda i: bool(re.fullmatch(r"\\[NnPpVv]\[\d+\]|%\d", found[i]))      # noqa: E731  (filled in by the engine)
+        ph = re.compile(r"\[\[(\d+)\]\]\s*")
+        lead = ""
+        pos = 0
+        while (mt := ph.match(protected, pos)) and not content(int(mt.group(1))):      # only formatting codes are peeled off the edges
+            lead += mt.group(0)
+            pos = mt.end()
+        end = len(protected)
+        trail = ""
+        while (mt := re.search(r"\s*\[\[(\d+)\]\]$", protected[pos:end])) and not content(int(mt.group(1))):
+            trail = mt.group(0) + trail
+            end = pos + mt.start()
+        core = protected[pos:end]
+        tokens: dict[str, str] = {}
+
+        def sub(mt):
+            i = int(mt.group(1))
+            c = found[i]
+            if re.fullmatch(r"\\[NnPp]\[\d+\]|%\d", c):          # actor/skill names filled in by the engine: %1 %2
+                tok = cls._NAMES[len(tokens) % len(cls._NAMES)]
+            elif re.fullmatch(r"\\[Vv]\[\d+\]", c):
+                tok = str(7000 + 13 * len(tokens))
+            else:
+                return ""
+            tokens[tok] = f"[[{i}]]"
+            return tok
+        bare = soften_punct(re.sub(r"\[\[(\d+)\]\]", sub, core))
         sents = split_sentences(bare) or [bare]
         out = " ".join(p for p in backend.translate_batch(sents) if p).strip()
+        if all(out.count(tok) == 1 for tok in tokens):
+            for tok, ph in tokens.items():
+                out = out.replace(tok, ph)
+        else:                                                # the stand-ins did not survive either: drop those codes
+            out = re.sub(r"\[\[\d+\]\]", "", re.sub("|".join(map(re.escape, tokens)) or "(?!x)x", "", out)) if tokens else out
         keep = lambda part: "".join(re.findall(r"\[\[\d+\]\]", part))      # noqa: E731
         return f"{keep(lead)}{out}{keep(trail)}"
+
