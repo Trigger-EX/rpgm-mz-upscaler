@@ -405,3 +405,13 @@ def test_fast_option_sets_the_backend_beam_and_keys_the_cache(tmp_path, tr):
     tr._backend = DictBackend()
     run(g, tmp_path / "out", tr, beam=2)
     assert tr.beam == 2
+
+
+def test_non_ascii_game_and_output_paths(tmp_path, tr):
+    g = make_game(tmp_path / "ゲーム テスト", "MV")
+    write(g / "data/Actors.json", [None, {"id": 1, "name": "アレックス", "nickname": "", "profile": ""}])
+    out = tmp_path / "出力 フォルダ"
+    res = run(g, out, tr)
+    assert res.files_changed >= 1 and (out / ".translation/report.tsv").is_file()
+    assert "Arekkusu" in (out / "data/Actors.json").read_text(encoding="utf-8")
+    assert "アレックス" in (g / "data/Actors.json").read_text(encoding="utf-8")        # the original is untouched

@@ -1,7 +1,15 @@
 import sys
 
 
+CLI_COMMANDS = {"analyze", "plan", "run", "unpack", "scripts", "detect", "saves", "translate", "translate-game"}
+
+
 def main() -> int:
+    """`rpgm-hub [GAME]` opens the window; `rpgm-hub analyze|plan|run|... ARGS` runs the command line (so a bundled build,
+    which has a single executable, offers both)."""
+    if len(sys.argv) > 1 and (sys.argv[1] in CLI_COMMANDS or sys.argv[1] == "--cli"):
+        from .cli import main as cli_main
+        return cli_main(sys.argv[2:] if sys.argv[1] == "--cli" else sys.argv[1:])
     try:
         from .gui.app import main as gui_main
     except ImportError as e:

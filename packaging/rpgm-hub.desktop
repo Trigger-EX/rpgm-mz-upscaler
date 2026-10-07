@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RPGM Hub
+Comment=Upscale, edit saves of and translate RPG Maker games
+Exec=rpgm-hub %F
+Icon=rpgm-hub
+Categories=Game;Utility;
+Terminal=false

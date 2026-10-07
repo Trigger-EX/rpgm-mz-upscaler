@@ -565,3 +565,34 @@ def test_plain_images_decrypts_encrypted_files_outside_the_known_folders(tmp_pat
     plan = build_plan(load_project(g), Options(movies=False, reencrypt=False))
     extra = [j for j in plan.jobs if j.src.endswith("extra.png_")]
     assert len(extra) == 1 and extra[0].passthrough and extra[0].dst.endswith("extra.png")
+
+
+def test_upscale_with_non_ascii_paths_and_resume(tmp_path):
+    g = make_game(tmp_path / "ゲーム 日本語", "MZ", encrypted=True)
+    out = tmp_path / "出力" / "高解像度"
+    plan, res = _run(g, out)
+    assert res.success, res.failed
+    assert imageops.load_image(out / "img/system/IconSet.png_", KEY).size == (16 * 52, 2 * 52)
+    plan2, res2 = _run(g, out)                                                     # a second run resumes everything
+    assert res2.success and res2.skipped == len([j for j in plan2.jobs if not j.keep_source]) and res2.ok == 0
+
+
+@pytest.mark.skipif(not __import__("os").environ.get("RPGM_REAL_RGSS3A"), reason="set RPGM_REAL_RGSS3A to a real game's Game.rgss3a")
+def test_real_rgss3a_archive_unpacks_and_plans(tmp_path):
+    src = Path(__import__("os").environ["RPGM_REAL_RGSS3A"])
+    from rpgm_upscaler.rgss import archive as ar
+    with ar.open_archive(src) as a:
+        assert a.entries and a.read(next(e.name for e in a.entries if e.name.lower().endswith(".rvdata2")))[:2] == b"\x04\x08"
+        files = a.extract_all(tmp_path / "x")
+    assert len(files) == len(a.entries) - len(a.collisions)
+
+
+def test_hub_entry_point_dispatches_cli_commands(tmp_path, monkeypatch, capsys):
+    import sys
+    from rpgm_upscaler import __main__ as entry
+    g = make_game(tmp_path / "g", "MZ")
+    monkeypatch.setattr(sys, "argv", ["rpgm-hub", "analyze", str(g)])
+    assert entry.main() == 0
+    assert "MZ" in capsys.readouterr().out
+    monkeypatch.setattr(sys, "argv", ["rpgm-hub", "--cli", "detect", str(g)])
+    assert entry.main() == 0

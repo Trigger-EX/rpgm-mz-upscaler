@@ -81,3 +81,15 @@ def test_ruby_loads_what_we_write(tmp_path):
     )
     r = subprocess.run(["ruby", "-e", script], capture_output=True, text=True)
     assert r.stdout.split() == ["4242", "edited", "true"], r.stderr
+
+
+def test_hash_keys_one_true_and_one_point_zero_stay_distinct():
+    """Ruby keeps 1, true and 1.0 apart; a plain Python dict would merge them (True == 1 == 1.0) and silently drop entries."""
+    from rpgm_upscaler.rgss import marshal as m
+    data = b"\x04\x08{\x08i\x06i\x0aTi\x0bf\x061i\x0c"          # {1=>5, true=>6, 1.0=>7}
+    h = m.loads(data)
+    assert len(h) == 3 and h[1] == 5 and h[m.RKey(True)] == 6 and h[m.RKey(1.0)] == 7
+    assert m.dumps(h) == data
+    h[m.RKey(True)] = 9                                          # edits keep their key
+    assert m.loads(m.dumps(h))[m.RKey(True)] == 9 and len(m.loads(m.dumps(h))) == 3
+    assert m.RKey(1.0) != m.RKey(True) and m.RKey(False) != 0

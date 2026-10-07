@@ -85,6 +85,31 @@ class RArray(list, _Ext):
         return hash(tuple(self))
 
 
+class RKey:
+    """A Hash key that Python would merge with another: Ruby keeps `1`, `true` and `1.0` apart, a Python dict does not
+    (True == 1 == 1.0). Boolean and Float keys are wrapped in this on load and unwrapped on dump."""
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
+
+    def _kind(self) -> str:
+        return "bool" if isinstance(self.value, bool) else "float"
+
+    def __hash__(self) -> int:
+        return hash((self._kind(), float(self.value)))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, RKey) and other._kind() == self._kind() and float(other.value) == float(self.value)
+
+    def __repr__(self) -> str:
+        return f"RKey({self.value!r})"
+
+
+def hash_key(k):
+    return RKey(k) if isinstance(k, (bool, float)) else k
+
+
 class RHash(dict, _Ext):
     has_default = False
     default: Any = None
@@ -272,7 +297,7 @@ class _Reader:
         if c in "{}":
             h = self.reg(RHash())
             for _ in range(self.long()):
-                k = self.obj()
+                k = hash_key(self.obj())
                 h[k] = self.obj()
             if c == "}":
                 h.has_default, h.default = True, self.obj()
@@ -427,6 +452,8 @@ class _Writer:
 
     def obj(self, o) -> None:
         out = self.out
+        if type(o) is RKey:
+            o = o.value
         if o is None:
             out.append(0x30)
         elif o is True:
