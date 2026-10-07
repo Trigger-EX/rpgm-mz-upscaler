@@ -17,6 +17,7 @@ RPGM Hub (Linux, PySide6 + CLI): upscale RPG Maker MV/MZ/VX Ace/VX games to 1080
 - Real Japanese MZ game (`samples/elweed/game`, git-ignored): translated (4352 strings, about 1 h with NLLB on 4 cores), upscaled, and title/menu/options compared with the original in Chromium.
 - Patch scales bare-number `*Width/*Height/*Spacing/*Padding` methods and `const ww = N` locals in rect methods.
 - Save map change done: `set_position` to another map reserves a transfer (`_transferring/_newMapId/_newX/_newY`; Ace/VX `@transferring/@new_map_id/...`) and leaves `_mapId` alone; `position()` reports the pending target. Unit-tested, and `tools/e2e_saves.py` (copies the game, adds Map002, checks the map after Scene_Map) PASSES against the real MV engine. Corescript clones with `git clone https://github.com/rpgtkoolmv/corescript` (plain github.com curl is 403, git works).
+- Real `.rgss3a` verified: "Twenty Years Ago" (itch.io freeware, VX Ace, 2.1 MB archive, 229 files) analyzes, unpacks and plans. Freeware fetch recipe: itch game page -> POST `<game>/download_url` (csrf) -> download page -> POST `<game>/file/<upload_id>?source=game_download&after_download_lightbox=true` -> signed URL. `.exe` SFX unpack with `apt-get update && apt-get install p7zip-full unshield`. Keep downloads out of the repo.
 - Everything is committed and pushed.
 
 ## Remaining ranked items (most valuable first)
@@ -31,7 +32,7 @@ RPGM Hub (Linux, PySide6 + CLI): upscale RPG Maker MV/MZ/VX Ace/VX games to 1080
 9. **XP** (`.rxdata`) is unsupported.
 
 ## Not verified
-MZ battle, shop and event screens and MZ audio; VX (not Ace); real `.rgss3a`; stock RGSS (`stock640`); OCR on decorative lettering.
+MZ battle, shop and event screens and MZ audio; VX (not Ace); stock RGSS (`stock640`); OCR on decorative lettering.
 
 ## Next step
 Take item 1 (name pre-pass), with a regression test.
