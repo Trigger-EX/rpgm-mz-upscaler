@@ -1,5 +1,6 @@
 """Whole-game translation: data rewriting for MV/MZ/Ace, plugin parameters, wrapping and the image overlay."""
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -325,3 +326,35 @@ def test_printf_placeholders_in_battle_messages_survive(tr):
     tr._backend = Dropper()
     out = tr.translate_many(["%1は%2を使った！"], romaji=False)[0].text
     assert out == "%1 used %2!"
+
+
+def test_undecodable_file_names_do_not_break_the_report(tmp_path, tr):
+    """Shift-JIS file names from a zip extracted on Linux are not valid UTF-8; the run must still finish and write its report."""
+    g = mv_game(tmp_path, "MV")
+    bad = os.fsdecode(b"img/pictures/\x83\x8c\x83C\x83A.png")           # a cp932 name as raw bytes
+    try:
+        Image.new("RGBA", (200, 80), (255, 255, 255, 255)).save(g / bad)
+    except OSError:
+        pytest.skip("this filesystem refuses non-UTF-8 names")
+    res = gamerun.translate_game(g, tmp_path / "out", tr, gamerun.Options(ocr=True), ocr_backend=FakeOcr())
+    assert res.images_changed >= 1 and (tmp_path / "out/.translation/report.tsv").is_file()
+
+
+def test_ocr_plausibility_filter_rejects_art_noise():
+    good = ["勇者の冒険", "ニューゲーム", "「何か植えようかな?」", "なんでもない", "魔王を倒すために旅に出よう"]
+    junk = ["に2", "ョシン", "ーーーーーーーーーーー", "Rたも2", "んでもを", "ンダ/", "ああああ", "ーードー"]
+    assert all(ocr.plausible_text(t) for t in good)
+    assert not any(ocr.plausible_text(t) for t in junk)
+
+
+def test_short_ocr_readings_must_occur_in_the_game_text(tmp_path, tr):
+    class TwoShort:
+        def detect(self, img):
+            return [ocr.TextRegion((10, 10, 60, 24), "アレックス", 90.0),        # an actor name from the database: a real label
+                    ocr.TextRegion((10, 50, 40, 24), "ソフ", 90.0)]             # art noise: not in the game's text
+    g = mv_game(tmp_path, "MV")
+    write(g / "data/Actors.json", [None, {"id": 1, "name": "アレックス", "nickname": "", "profile": ""}])
+    Image.new("RGBA", (200, 90), (255, 255, 255, 255)).save(g / "img/pictures/Label.png")
+    res = gamerun.translate_game(g, tmp_path / "out", tr, gamerun.Options(ocr=True), ocr_backend=TwoShort())
+    imgs = [r["ja"] for r in res.rows if r["kind"] == "image"]
+    assert "アレックス" in imgs and "ソフ" not in imgs

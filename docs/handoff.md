@@ -5,24 +5,26 @@ RPGM Hub (Linux, PySide6 + CLI): upscale RPG Maker MV/MZ/VX Ace/VX games to 1080
 
 ## Decisions and constraints
 - Work only on branch `ccr-3bb5b40d-4u069j`. Import name `rpgm_upscaler`.
-- Models run on ctranslate2: NLLB-200 600M (`translate install nllb`, preferred) with Argos ja-en as fallback. Romaji only for names.
+- Models run on ctranslate2: NLLB-200 600M (`translate install nllb`, preferred) with Argos ja-en fallback. Romaji only for names.
+- Translation cache keys carry `PIPELINE` (translate/service.py); bump it when protection or splitting rules change.
 - `translate-game GAME -o OUT` writes a copy; `OUT/.translation/report.tsv` and `memory.tsv` (reuse with `--memory`). Names that scripts or plugins compare against are kept.
-- OCR = Tesseract `jpn` + OpenCV (`--ocr`). mkxp-z exe must be named `Game`; `"RTP": [path]` in mkxp.json.
+- OCR = Tesseract `jpn` + OpenCV (`--ocr`). Short readings must occur in the game's own text; `plausible_text` filters art noise.
+- mkxp-z exe must be named `Game`; `"RTP": [path]` in mkxp.json.
 - `CLAUDE.md` Autonomy rules and Stop hook `.claude/hooks/keep-going.sh`: end replies with `STATUS: DONE` or `STATUS: NEEDS_INPUT - <question>`.
 
 ## Current state
-- 140 tests pass, 6 opt-in e2e skipped (full runs go to a Haiku test-runner).
-- Pushed: translator, GUI "Translate game" tab, audit fixes (plugin-defined resolution, runner keeps originals, MZ patch, Marshal floats, Ace position, atomic saves).
-- Uncommitted before this checkpoint: vectorised RGSS cipher (equivalence-tested, speed gain unmeasured), hooks, CLAUDE.md.
-- Test games in git-ignored `samples/`: crysalis (Ace), mzproj and delusion (MZ), chainsaw and omori (MV), elweed (real Japanese MZ 1.3.0, 4352 strings, encrypted images).
-- A background `translate-game` run on elweed writes `/home/user/elweed_out`; log `/tmp/elweed_tr.log`.
+- Full suite passes (run it through a Haiku agent); MV real-engine e2e 13/13 (one screenshot check is load-flaky).
+- Real Japanese MZ game (`samples/elweed/game`, git-ignored) translated (4352 strings) and upscaled; title, menu and options compared with the original in Chromium. Findings fixed: plugin control codes with text arguments, `%1`/`\N[n]` placeholders, repeated words, undecodable file names, MZ local size literals.
+- Upscale patch scales every bare-number `*Width/*Height/*Spacing/*Padding` method and `const ww = N` locals in rect methods.
+- Everything is pushed except the last OCR layout/filter commit if the next session finds it uncommitted.
 
 ## Open questions
-- Translation quality on real Japanese text is unreviewed. MZ visuals unverified.
-- Not done: name pre-pass, unscaled MV window widths, save map transfer, RTP detection, XP.
+- NLLB is slow (about 1 h for 4300 strings on 4 cores) and sometimes invents words; a name pre-pass and per-speaker context are untried.
+- Not verified: MZ battle, shop and event screens; VX (not Ace); real `.rgss3a`; stock RGSS; OCR on art with decorative lettering.
+- Not done: save map transfer, RTP detection, XP, ncnn batching.
 
 ## Next step
-Read `/home/user/elweed_out/.translation/report.tsv` and fix what looks wrong. Then upscale elweed (encrypted MZ images) and boot it. Then take the window-width literals item from the audit list.
+Commit and push any pending OCR changes, then take the ranked audit items in the README and this file (name pre-pass, map transfer, ncnn batching).
 
 ## Chat
 Base name: rpgm-mz-upscaler-27

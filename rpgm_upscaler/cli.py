@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     a_tg.add_argument("--ocr", action="store_true", help="also find Japanese text in images (OpenCV + Tesseract) and overlay English")
     a_tg.add_argument("--ocr-scope", choices=["likely", "all"], default="likely",
                       help="likely: pictures, titles, system (default); all: every image file")
-    a_tg.add_argument("--ocr-min-conf", type=float, default=55.0, help="minimum OCR confidence 0-100 (default 55)")
+    a_tg.add_argument("--ocr-min-conf", type=float, default=60.0, help="minimum OCR confidence 0-100 (default 60)")
     a_tg.add_argument("--font", help="TTF/OTF font for overlaid English (default: a system sans-serif)")
     a_tg.add_argument("--wrap-chars", type=int, help="characters per message line (default: estimated from the engine)")
     a_tg.add_argument("--memory", metavar="TSV", help="your corrections (japanese<TAB>english, e.g. an edited .translation/memory.tsv) that win over the model")

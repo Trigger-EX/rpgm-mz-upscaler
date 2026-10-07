@@ -31,6 +31,23 @@ class OcrError(Exception):
     pass
 
 
+_CANT_START = set("ぁぃぅぇぉっゃゅょゎんーァィゥェォッャュョヮン・、。")
+_JP_PUNCT = set("「」『』、。！？…・ー〜～ 　!?.,-")
+
+
+def plausible_text(text: str, conf: float = 100.0) -> bool:
+    """Is this OCR reading shaped like real Japanese text? Hand-drawn art produces confident junk ("に2", "ーーーー", "ョシン"):
+    too few real characters, digits/latin mixed in, runs of long-vowel marks, or a first character no word can start with."""
+    t = text.replace(" ", "").replace("\u3000", "")
+    core = [c for c in t if is_japanese(c) and c not in "ー・"]
+    if len(core) < 2 or t[0] in _CANT_START:
+        return False
+    if re.search(r"[ーｰ]{2,}|(.)\1{3,}", t):
+        return False
+    other = sum(1 for c in t if not is_japanese(c) and c not in _JP_PUNCT)
+    return other <= 0.15 * len(t)
+
+
 @dataclass
 class TextRegion:
     box: tuple[int, int, int, int]     # x, y, w, h in image pixels
@@ -84,7 +101,7 @@ def _variants(gray: np.ndarray) -> list[np.ndarray]:
 class Tesseract:
     """Horizontal (and optionally vertical) Japanese text via the tesseract CLI, with image preprocessing."""
 
-    def __init__(self, min_conf: float = 55.0, vertical: bool = True, scale: float | None = None, timeout: int = 60):
+    def __init__(self, min_conf: float = 60.0, vertical: bool = True, scale: float | None = None, timeout: int = 60):
         ok, why = ocr_available(("jpn",))
         if not ok:
             raise OcrError(why)
@@ -122,7 +139,7 @@ class Tesseract:
                 continue
             conf = sum(w["c"] for w in ws) / len(ws)
             lh = max(w["h"] for w in ws) / s
-            if conf < self.min_conf or lh < 8 or (ja < 2 and not (conf >= 85 and lh >= 24)):    # lone glyphs (一, 口) are usually art
+            if conf < self.min_conf or lh < 8 or not plausible_text(text, conf):      # lone glyphs and confident junk are usually art
                 continue
             x0, y0 = min(w["x"] for w in ws), min(w["y"] for w in ws)
             x1, y1 = max(w["x"] + w["w"] for w in ws), max(w["y"] + w["h"] for w in ws)
@@ -281,6 +298,10 @@ def overlay_translation(img: Image.Image, regions: list[TextRegion], font_path: 
         alpha = crop[..., 3]
         gray = _flatten(Image.fromarray(crop))
         mask = _fg_mask(gray)
+        coverage = float((mask > 0).mean())
+        if coverage > 0.6 or coverage < 0.02:                              # not lettering on a background: leave the picture alone
+            r.en = ""
+            continue
         ring = np.ones(mask.shape, bool)
         ring[mask > 0] = False
         bg_alpha = int(np.median(alpha[ring])) if ring.any() else 255
@@ -300,17 +321,35 @@ def overlay_translation(img: Image.Image, regions: list[TextRegion], font_path: 
     for r, fg_rgb, bg_rgb in plans:
         x, y, w, h = r.box
         layer_w, layer_h = (h, w) if r.vertical else (w, h)
-        grow = int(layer_w * 0.25)                                  # English runs longer than Japanese
-        lw = min(layer_w + grow, (H if r.vertical else W))
-        layer = Image.new("RGBA", (lw, layer_h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(layer)
-        lines, f = fit_text(d, r.en, lw, layer_h, font_path, max_size=max(10, int(layer_h / max(1, r.lines) * 1.0)))
-        lum = 0.299 * fg_rgb[0] + 0.587 * fg_rgb[1] + 0.114 * fg_rgb[2]
-        stroke = (0, 0, 0, 255) if lum > 128 else (255, 255, 255, 255)
+        limit_w, limit_h = (H, W) if r.vertical else (W, H)
+        centered = abs((x + w / 2) - W / 2) < W * 0.08 and not r.vertical
+        pos = (y if r.vertical else x)                               # where the layer starts along its own width axis
+        if centered:
+            room = int(2 * min(x + w / 2, W - (x + w / 2))) - 8
+        else:
+            room = (limit_w - pos) - 4
+        room = max(layer_w, room)
+        line_h0 = layer_h / max(1, r.lines)
+        want = max(10, int(line_h0))                                  # the font size the original lettering had
+        probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+        # English runs longer than Japanese: use the free room beside the original before shrinking or wrapping
+        chosen = None
+        for mult in (1.25, 2.0, 3.0, 5.0, 100.0):
+            lw = min(int(layer_w * mult), room)
+            lines, f = fit_text(probe, r.en, lw, layer_h, font_path, max_size=want)
+            if f.size >= 0.85 * want or lw >= room:
+                chosen = (lw, lines, f)
+                break
+        lw, lines, f = chosen
         asc, desc = f.getmetrics() if hasattr(f, "getmetrics") else (f.size, 0)
         lh = int((asc + desc) * 1.05)
-        ty = max(0, (layer_h - lh * len(lines)) // 2)
-        centered = abs((x + w / 2) - W / 2) < W * 0.08
+        need_h = lh * len(lines)
+        lay_h = max(layer_h, min(need_h, limit_h - (x if r.vertical else y)))    # grow downward instead of clipping
+        layer = Image.new("RGBA", (lw, lay_h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        lum = 0.299 * fg_rgb[0] + 0.587 * fg_rgb[1] + 0.114 * fg_rgb[2]
+        stroke = (0, 0, 0, 255) if lum > 128 else (255, 255, 255, 255)
+        ty = max(0, (lay_h - need_h) // 2) if need_h <= layer_h else 0
         for ln in lines:
             tw = d.textlength(ln, font=f)
             tx = (lw - tw) / 2 if centered else 0
@@ -321,7 +360,7 @@ def overlay_translation(img: Image.Image, regions: list[TextRegion], font_path: 
             out.alpha_composite(layer, (max(0, min(W - layer.width, x + w // 2 - layer.width // 2)), max(0, y)))
         else:
             px = x - (lw - w) // 2 if centered else x
-            out.alpha_composite(layer, (max(0, min(W - lw, px)), y))
+            out.alpha_composite(layer, (max(0, min(W - lw, px)), max(0, min(H - lay_h, y))))
     return out
 
 

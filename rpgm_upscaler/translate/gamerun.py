@@ -22,7 +22,7 @@ from ..detect import EngineInfo, ci_child, detect_engine
 from ..rgss import marshal as m
 from ..rgss.archive import open_archive
 from . import gametext as gt
-from .detect import is_japanese
+from .detect import is_japanese, normalize
 from .pluginparams import collect_plugin_params
 
 Progress = Callable[[str, int, int], None]
@@ -40,7 +40,7 @@ class Options:
     plugin_params: bool = True
     ocr: bool = False
     ocr_scope: str = "likely"           # likely | all
-    ocr_min_conf: float = 55.0
+    ocr_min_conf: float = 60.0
     font: str | None = None
     wrap_chars: int | None = None
     keep_referenced: bool = True        # leave names that scripts/plugins compare against untouched
@@ -344,7 +344,8 @@ def _set_locale(system_json: Path) -> None:
 def _write_report(out: Path, res: Result) -> None:
     d = out / ".translation"
     d.mkdir(exist_ok=True)
-    with open(d / "report.tsv", "w", encoding="utf-8", newline="") as f:
+    # file names from Shift-JIS zips can hold undecodable bytes (surrogates in Python): never let a report crash the run
+    with open(d / "report.tsv", "w", encoding="utf-8", errors="backslashreplace", newline="") as f:
         w = csv.writer(f, delimiter="\t", lineterminator="\n")
         w.writerow(["kind", "where", "japanese", "english", "source"])
         for r in res.rows:
@@ -353,7 +354,7 @@ def _write_report(out: Path, res: Result) -> None:
     for r in res.rows:
         if r["en"] and r["kind"] != "image":
             seen.setdefault(r["ja"], r["en"])
-    with open(d / "memory.tsv", "w", encoding="utf-8", newline="") as f:     # edit the English column, then rerun with --memory
+    with open(d / "memory.tsv", "w", encoding="utf-8", errors="backslashreplace", newline="") as f:     # edit the English column, then rerun with --memory
         w = csv.writer(f, delimiter="\t", lineterminator="\n")
         w.writerow(["japanese", "english"])
         for ja, en in seen.items():
@@ -403,6 +404,9 @@ def _translate_images(info, proj, out: Path, translator, opts: Options, res: Res
         done = {}
     lock = threading.Lock()
     counter = {"n": 0}
+    # Short readings are where junk hides (art fragments read as "ソフ", "レン"), and where real labels reuse the game's own words
+    # (actor names, terms): keep a short region only if that text occurs in the game's data.
+    corpus = "\n".join(normalize(r["ja"]) for r in res.rows if r["kind"] != "image")
 
     def sig(p: Path) -> list[int]:
         s = p.stat()
@@ -421,6 +425,7 @@ def _translate_images(info, proj, out: Path, translator, opts: Options, res: Res
             with lock:
                 res.warnings.append(f"{rel}: {e}")
             return
+        regions = [r for r in regions if len(r.text) > 5 or normalize(r.text) in corpus]
         with lock:
             res.images_scanned += 1
         if regions:

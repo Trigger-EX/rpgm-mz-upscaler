@@ -91,12 +91,14 @@ rpgm-hub-cli translate-game GAME -o OUT [--ocr] [--ocr-scope likely|all] [--memo
 * **Save formats**: the LZString port is byte-identical to the library MV ships; the Ruby Marshal codec round-trips fixtures made
   by real Ruby 3.3 byte for byte, and Ruby loads what the editor writes. The RGSS archive algorithm was cross-checked against
   mkxp-z's own `rgssad.cpp`, and the mkxp.json keys and the `Hires/` convention against mkxp-z's source.
-* **Real engines and games** (this session): the MV corescript e2e passes; a real **mkxp-z** build runs a generated VX Ace game and the
-  free *Crysalis* Ace game (with the official RTP) with the Hires pack, and `tests/test_e2e_mkxpz.py` checks that the Hires texture is
-  what gets drawn; real **MZ 1.9/1.10** games (the VisuStella sample and a free itch.io game) boot to the title/splash with the patch.
-  All 131 real Crysalis `.rvdata2` files load and re-save byte-identically. The real Argos and NLLB models were run.
-* **Not verified**: MZ visuals (only booted with placeholder images, no audio); VX (not Ace) and real `.rgss3a`/`.rgssad` archives;
-  the stock RGSS player (`stock640`); translation and OCR on a real Japanese game (tested on generated data and real English games);
+* **Real engines and games**: the MV corescript e2e passes; a real **mkxp-z** build runs a generated VX Ace game and the free *Crysalis*
+  Ace game (with the official RTP) with the Hires pack, and `tests/test_e2e_mkxpz.py` checks that the Hires texture is what gets drawn.
+  A real, full **Japanese MZ 1.3.0 game with encrypted images and 34 plugins** was translated (4352 strings, 18 files rewritten, control
+  codes preserved in all but 2 of 1707 strings that have them) and upscaled to 1920x1080; its title, menu and options screens were
+  compared with the original in headless Chromium (UI scaled 1.625x, windows proportional, art sharp). All 131 real Crysalis `.rvdata2`
+  files load and re-save byte-identically. The real Argos and NLLB models were run.
+* **Not verified**: MZ battle, shop and event screens and MZ audio; VX (not Ace) and real `.rgss3a`/`.rgssad` archives;
+  the stock RGSS player (`stock640`); image OCR on real Japanese game artwork (only synthetic images so far);
   games with plugin-defined resolutions (e.g. a resolution-option plugin) are likely to need manual touch-up.
 
 ## Limitations
