@@ -166,7 +166,22 @@ def apply_hires(plan, out: Path) -> list[str]:
     return ["mkxp.json", "README-HUB.txt"] + bundled + (["Fonts"] if (out / "Fonts").is_dir() else [])
 
 
-def refresh_export(out: Path, mkxp_path: str = "") -> list[str]:
+def restore_missing_files(out: Path, source: Path) -> int:
+    """Copy files the original game has but the export lacks (an Audio/ or Movies/ folder an older version dropped). Nothing in the
+    export is replaced, and the images the export already holds (upscaled, under their own names) are never touched."""
+    from .pipeline import _merge_loose_dir
+    from ..detect import detect_engine
+    info = detect_engine(source)
+    if info is None:
+        raise ValueError("the original folder is not a game folder")
+    before = sum(1 for p in out.rglob("*") if p.is_file())
+    for d in info.root.iterdir():
+        if d.is_dir() and not d.is_symlink() and not d.name.startswith(".") and d.name.lower() not in ("hires", "graphics", "data"):
+            _merge_loose_dir(d, out / d.name)
+    return sum(1 for p in out.rglob("*") if p.is_file()) - before
+
+
+def refresh_export(out: Path, mkxp_path: str = "", source: str | Path | None = None) -> list[str]:
     """Re-run the cheap steps of a hires export on a folder that is already upscaled (no images are touched): the mkxp.json
     keys, Win32API preloads and the TRGSSX stand-in, the font stand-ins, the bundled mkxp-z player and README-HUB.txt.
     Returns what was done plus the warnings found."""
@@ -191,7 +206,12 @@ def refresh_export(out: Path, mkxp_path: str = "") -> list[str]:
     opts = Options(mkxp_path=mkxp_path, bundle_player=not have_player or mkxpmod.locate(mkxp_path) is not None)
     plan = SimpleNamespace(project=project, options=opts, warnings=[], scale=SimpleNamespace(n=n))
     done = apply_hires(plan, out)
-    return [f"updated {', '.join(done)}"] + plan.warnings
+    notes = [f"updated {', '.join(done)}"]
+    if source:
+        n = restore_missing_files(out, Path(source))
+        notes.append(f"restored {n} file(s) that the original game has and this export lacked (Audio, Movies ...)" if n else
+                     "nothing to restore: every file of the original's other folders is already in the export")
+    return notes + plan.warnings
 
 
 def render_script(width: int = 640, height: int = 480) -> str:

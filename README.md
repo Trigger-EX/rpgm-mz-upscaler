@@ -54,7 +54,8 @@ stand-in. Games using `TRGSSX.dll` (Tomy's *ビットマップ拡張*) get a sta
 DLL itself draws (rotated or blended blits, polygons, anti-aliased text) is missing. Not verified against a real TRGSSX game.
 
 **Already upscaled?** `rpgm-hub fix-export FOLDER` (or *Fix an existing export…* in the mkxp-z box) re-applies the fonts, the Win32API
-preloads, the TRGSSX stand-in and the mkxp-z player to a finished hires export, without redoing any image.
+preloads, the TRGSSX stand-in and the mkxp-z player to a finished hires export, without redoing any image. Add `--source ORIGINAL_GAME`
+to also copy in files the export lacks (e.g. a loose `Audio/` folder that older versions dropped for archived games).
 
 ### Save editor
 Lists the saves of a game, shows **switches, variables, gold, party (level / EXP / HP / MP), inventory, map and position**

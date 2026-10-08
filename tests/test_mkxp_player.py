@@ -197,3 +197,18 @@ def test_scripts_with_string_ids_can_be_listed_and_patched():
     assert sc.listing(arr)[0].id == 7
     sc.insert_before_main(arr, "extra", "y")
     assert len(arr) == 2
+
+
+def test_fix_export_restores_audio_the_export_lacks(tmp_path):
+    import shutil
+    g = make_ace(tmp_path / "g", ace=True)
+    (g / "Audio" / "SE").mkdir(parents=True)
+    (g / "Audio" / "SE" / "hit.ogg").write_bytes(b"se")
+    out = tmp_path / "out"; shutil.copytree(g, out)
+    (out / "mkxp.json").write_text("{}")
+    (out / "Audio" / "SE" / "hit.ogg").unlink()
+    (out / "Audio" / "BGM" / "Theme.ogg").write_bytes(b"export copy")
+    notes = patch.refresh_export(out, source=g)
+    assert (out / "Audio" / "SE" / "hit.ogg").read_bytes() == b"se"
+    assert (out / "Audio" / "BGM" / "Theme.ogg").read_bytes() == b"export copy"      # existing files are never replaced
+    assert any("restored 1 file" in n for n in notes)
