@@ -208,7 +208,9 @@ def provide_fonts(base: Path, out: Path, cfg: dict, sources: list[str], extra_di
     own_families = {font_family(f) for f in own_files} | set(game_font_files(base))      # what the game's own Fonts/ already provides
     installed = installed_fonts(extra_dirs)
     fonts_dir = out / "Fonts"
-    subs = [x for x in cfg.get("fontSub", []) if isinstance(x, str)]
+    # entries an older version wrote (mixed-case keys, file-name targets) can never match in mkxp-z: drop them, keep valid ones
+    present = {font_family(f) for f in game_font_files(out).values()}
+    subs = [x for x in cfg.get("fontSub", []) if isinstance(x, str) and ">" in x and x == x.lower() and x.split(">")[1] in present]
     have_sub = {x.split(">")[0].strip().lower() for x in subs}
     wanted_keys = {_norm(n) for n in wanted}
     copied: dict[Path, str] = {}                     # stand-in file -> its family (lowercase), one copy each

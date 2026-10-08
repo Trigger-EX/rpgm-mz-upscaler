@@ -91,6 +91,9 @@ def main(argv: list[str] | None = None) -> int:
     s_set.add_argument("--pos", metavar="X,Y")
     a_mk = sub.add_parser("mkxp", help="the mkxp-z player for VX / VX Ace / XP hires exports: status | install")
     a_mk.add_argument("action", choices=["status", "install"])
+    a_fx = sub.add_parser("fix-export", help="re-apply the fonts, preloads and mkxp-z player of a hires export that is already upscaled (no re-upscaling)")
+    a_fx.add_argument("folder")
+    a_fx.add_argument("--mkxp-path", metavar="DIR", help="folder that already holds mkxp-z (default: the downloaded copy)")
     a_tr = sub.add_parser("translate", help="offline Japanese -> English: TEXT... | --file F | install | import PATH | status")
     a_tr.add_argument("items", nargs="*")
     a_tr.add_argument("--file", help="translate each line of a UTF-8 text file")
@@ -118,6 +121,15 @@ def main(argv: list[str] | None = None) -> int:
     a_tg.add_argument("--beam", type=int, choices=[1, 2, 3, 4, 5], help="model search width (default 4; --fast is 1)")
     a_tg.add_argument("--workers", type=int, default=0, help="parallel image workers (default: auto)")
     args = ap.parse_args(argv)
+    if args.cmd == "fix-export":
+        from .rgss import patch
+        try:
+            for line in patch.refresh_export(args.folder, args.mkxp_path or ""):
+                print(line)
+        except (ValueError, OSError) as e:
+            print("error:", e, file=sys.stderr)
+            return 2
+        return 0
     if args.cmd == "mkxp":
         from .rgss import mkxp
         if args.action == "install":

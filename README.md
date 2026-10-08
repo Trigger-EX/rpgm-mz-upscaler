@@ -53,6 +53,9 @@ The export also enables mkxp-z's Win32API and Ruby 1.8 preload scripts, and give
 stand-in. Games using `TRGSSX.dll` (Tomy's *ビットマップ拡張*) get a stand-in that answers its version check so they start; what the
 DLL itself draws (rotated or blended blits, polygons, anti-aliased text) is missing. Not verified against a real TRGSSX game.
 
+**Already upscaled?** `rpgm-hub fix-export FOLDER` (or *Fix an existing export…* in the mkxp-z box) re-applies the fonts, the Win32API
+preloads, the TRGSSX stand-in and the mkxp-z player to a finished hires export, without redoing any image.
+
 ### Save editor
 Lists the saves of a game, shows **switches, variables, gold, party (level / EXP / HP / MP), inventory, map and position**
 with their names from the database, and writes changes back safely: a `.bak` backup is made first (the last five are kept),

@@ -192,6 +192,9 @@ class UpscaleTab(QWidget):
         self.mkxp_use_btn = QPushButton("Use existing…")
         self.mkxp_use_btn.setToolTip("Pick a folder that already holds mkxp-z (the program, scripts/ and stdlib/).")
         self.mkxp_page_btn = QPushButton("Open download page")
+        self.mkxp_fix_btn = QPushButton("Fix an existing export…")
+        self.mkxp_fix_btn.setToolTip("Re-applies the fonts, Win32API preloads and the mkxp-z player to a hires export that is already upscaled. "
+                                     "No images are redone.")
         self.mkxp_help = QLabel("mkxp-z has no releases, only automatic builds. Alternatives: use the button above, pick a build yourself on the "
                                 "download page (the Linux x86_64 one), or build it from github.com/mkxp-z/mkxp-z. The player is copied into "
                                 "each export, so the exported folder starts with ./Game and nothing else to install.")
@@ -205,12 +208,14 @@ class UpscaleTab(QWidget):
         g.addWidget(self.mkxp_progress, 1, 3)
         g.addWidget(self.mkxp_help, 2, 0, 1, 4)
         g.addWidget(self.mkxp_bundle, 3, 0, 1, 2); g.addWidget(self.mkxp_skip, 3, 2, 1, 2)
+        g.addWidget(self.mkxp_fix_btn, 4, 0, 1, 2)
         self.mkxp_box.setVisible(False)                 # shown once a VX / Ace / XP game is analysed
         v.addWidget(self.mkxp_box)
         self._mkxp_worker = None
         self.mkxp_install_btn.clicked.connect(self.install_mkxp)
         self.mkxp_use_btn.clicked.connect(self._use_existing_mkxp)
         self.mkxp_page_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(mkxp.PAGE)))
+        self.mkxp_fix_btn.clicked.connect(self._fix_export)
         self.mkxp_bundle.toggled.connect(lambda _on: self.update_mkxp_status())
         self.mkxp_skip.toggled.connect(lambda _on: self.update_mkxp_status())
 
@@ -246,6 +251,21 @@ class UpscaleTab(QWidget):
             w.deleteLater()
         self.mkxp_progress.setVisible(False)
         self.update_mkxp_status()
+
+    def _fix_export(self) -> None:
+        from ..rgss import patch
+        d = QFileDialog.getExistingDirectory(self, "The upscaled game folder to fix", self.out_edit.text().strip() or str(Path.home()))
+        if not d:
+            return
+        try:
+            lines = patch.refresh_export(Path(d), self.mkxp_path)
+        except (ValueError, OSError) as e:
+            self._append_log("error", f"fix export: {e}")
+            QMessageBox.warning(self, "Fix an existing export", str(e))
+            return
+        for i, line in enumerate(lines):
+            self._append_log("info" if i == 0 else "warning", line)
+        QMessageBox.information(self, "Fix an existing export", "\n".join(lines))
 
     def _use_existing_mkxp(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Folder that holds mkxp-z (the program, scripts/ and stdlib/)", self.mkxp_path or str(Path.home()))
