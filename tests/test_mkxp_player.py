@@ -166,3 +166,34 @@ def test_fix_export_repairs_an_old_export_without_touching_images(tmp_path, monk
     assert notes and notes[0].startswith("updated")
     with pytest.raises(ValueError):
         patch.refresh_export(tmp_path / "nothing")
+
+
+def test_fix_export_replaces_the_misnamed_stand_in_files_of_older_versions(tmp_path, monkeypatch):
+    """Older versions wrote 'Fonts/UmePlus Gothic.ttf' (a stand-in under the font's name). mkxp-z keys fonts by the family inside
+    the file, so that file provided nothing, yet it made the tool think the font was there and skip the fontSub entry."""
+    import shutil
+    from rpgm_upscaler.rgss import fonts
+    fdir = tmp_path / "sysfonts"; fdir.mkdir()
+    (fdir / "IPAGothic.ttf").write_bytes(b"fake")
+    monkeypatch.setattr(fonts, "SYSTEM_DIRS", [str(fdir)])
+    monkeypatch.setattr(fonts, "_fc_list", lambda: {})
+    monkeypatch.setattr(fonts, "japanese_fonts", lambda: [])
+    real_family = fonts.font_family
+    monkeypatch.setattr(fonts, "font_family", lambda p: "ipagothic" if p.stem == "UmePlus Gothic" else real_family(p))
+    g = make_ace(tmp_path / "g", ace=True)
+    out = tmp_path / "out"; shutil.copytree(g, out)
+    (out / "mkxp.json").write_text("{}")
+    (out / "Fonts").mkdir(); (out / "Fonts" / "UmePlus Gothic.ttf").write_bytes(b"stand-in under the wrong name")
+    patch.refresh_export(out)
+    cfg = json.loads((out / "mkxp.json").read_text())
+    assert "umeplus gothic>ipagothic" in cfg["fontSub"]
+    assert not (out / "Fonts" / "UmePlus Gothic.ttf").exists() and (out / "Fonts" / "IPAGothic.ttf").is_file()
+
+
+def test_scripts_with_string_ids_can_be_listed_and_patched():
+    import zlib
+    from rpgm_upscaler.rgss import marshal as m, scripts as sc
+    arr = m.RArray([m.RArray([m.RString(b"7", {}), m.RString(b"Main", {}), m.RString(zlib.compress(b"x"), {})])])
+    assert sc.listing(arr)[0].id == 7
+    sc.insert_before_main(arr, "extra", "y")
+    assert len(arr) == 2

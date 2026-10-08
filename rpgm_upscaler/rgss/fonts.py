@@ -70,11 +70,17 @@ def script_font_names(sources: list[str]) -> list[str]:
             found.setdefault(t)
 
     for src in sources:
-        for line in src.splitlines():
+        lines = src.splitlines()
+        near = 0                                     # lines left in the window after a line that mentions Font (multi-line arrays)
+        for line in lines:
             if re.search(r"font", line, re.I):
+                near = 3
+            if near > 0 and re.search(r"font|^\s*[\[\]\"',]|\]\s*$", line, re.I):
+                near -= 1
                 for lit in re.finditer(_STR, line):
                     add(lit.group(1) or lit.group(2) or "")
             else:
+                near = 0
                 for lit in re.finditer(_STR, line):
                     text = lit.group(1) or lit.group(2) or ""
                     if text.strip().lower() in known:
@@ -194,6 +200,18 @@ def pick_substitute(name: str, installed: dict[str, Path], bundled: list[Path] |
     return None
 
 
+def _drop_misnamed_stand_ins(out: Path) -> None:
+    """Older versions copied a stand-in as 'Fonts/UmePlus Gothic.ttf'. mkxp-z ignores file names, and such a file made the tool
+    believe the font was provided. Remove files named like a well-known font whose own family is something else."""
+    known = {_norm(n) for n in COMMON_NAMES}
+    for f in list(game_font_files(out).values()):
+        if _norm(f.stem) in known and font_family(f) != f.stem.strip().lower() and _norm(font_family(f)) != _norm(f.stem):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
 def provide_fonts(base: Path, out: Path, cfg: dict, sources: list[str], extra_dirs: list[Path] | None = None) -> list[str]:
     """Make every font the game names resolvable by mkxp-z. Returns warnings/notes.
 
@@ -204,8 +222,9 @@ def provide_fonts(base: Path, out: Path, cfg: dict, sources: list[str], extra_di
         notes.append("this computer has no Japanese font, so Japanese text (and mkxp-z's own error boxes) shows as squares: " + INSTALL_HINT)
     wanted = script_font_names(sources)
     names = list(dict.fromkeys(wanted + COMMON_NAMES))
+    _drop_misnamed_stand_ins(out)
     own_files = list(game_font_files(base).values())
-    own_families = {font_family(f) for f in own_files} | set(game_font_files(base))      # what the game's own Fonts/ already provides
+    own_families = {font_family(f) for f in own_files}                # mkxp-z keys fonts by the family inside the file, not the file name
     installed = installed_fonts(extra_dirs)
     fonts_dir = out / "Fonts"
     # entries an older version wrote (mixed-case keys, file-name targets) can never match in mkxp-z: drop them, keep valid ones
@@ -232,7 +251,7 @@ def provide_fonts(base: Path, out: Path, cfg: dict, sources: list[str], extra_di
     for name in names:
         key = _norm(name)
         low = name.strip().lower()
-        if low in have_sub or key in own_families or low in own_families:
+        if low in have_sub or low in own_families or key in {_norm(x) for x in own_families}:
             continue
         exact = installed.get(key)
         if exact is not None and key in wanted_keys:                                   # the very font is installed here: ship it

@@ -29,6 +29,17 @@ def load(buf: bytes) -> m.RArray:
     return arr
 
 
+def _id(e) -> int:
+    """Script ids are normally integers; some games store them as strings (or anything else): use what can be read, else 0."""
+    v = e[0]
+    if isinstance(v, m.RString):
+        v = v.text
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _title(e) -> str:
     t = e[1]
     return t.text if isinstance(t, m.RString) else str(t)
@@ -49,7 +60,7 @@ def listing(arr) -> list[ScriptInfo]:
             size = len(zlib.decompress(e[2].data))
         except zlib.error:
             size = -1
-        out.append(ScriptInfo(i, int(e[0]), _title(e), size))
+        out.append(ScriptInfo(i, _id(e), _title(e), size))
     return out
 
 
@@ -66,7 +77,7 @@ def insert_before_main(arr, title: str, src: str, script_id: int = 700001) -> m.
     for i, e in enumerate(list(arr)):
         if _title(e) == title:
             del arr[i]
-    used = {int(e[0]) for e in arr}
+    used = {_id(e) for e in arr}
     while script_id in used:
         script_id += 1
     idx = next((i for i in range(len(arr) - 1, -1, -1) if _title(arr[i]).strip().lower().endswith("main")), len(arr) - 1)
