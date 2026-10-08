@@ -265,6 +265,7 @@ def test_hires_gives_missing_fonts_a_stand_in(tmp_path, monkeypatch):
     monkeypatch.setattr(fonts, "japanese_fonts", lambda: [])
     assert fonts.script_font_names(['Font.default_name = "UmePlus Gothic"', "Font.default_name = ['A B', 'C']"]) == ["UmePlus Gothic", "A B", "C"]
     assert fonts.script_font_names(['unless Font.exist?("Foo Sans")\n  msgbox "x.png"\nend', 'n = "Meiryo"', 'a = "Other"']) == ["Foo Sans", "Meiryo"]
+    assert fonts.script_font_names(['Font.default_name = [\n  "Bitter",\n  "Arial"\n]\nx = "unrelated"']) == ["Bitter", "Arial"]
     assert fonts._style_rank("Regular") == 0 and fonts._style_rank("Italic") == 2 and fonts._style_rank("Bold Italic") == 2
     g = make_ace(tmp_path / "g", ace=True)
     plan = build_plan(load_rgss_project(g), Options(), "hires")
@@ -275,3 +276,17 @@ def test_hires_gives_missing_fonts_a_stand_in(tmp_path, monkeypatch):
     assert "umeplus gothic>ipagothic" in cfg["fontSub"] and "ms gothic>ipagothic" in cfg["fontSub"]
     assert all(x == x.lower() for x in cfg["fontSub"])
     assert (out / "Fonts" / "IPAGothic.ttf").is_file() and len(list((out / "Fonts").iterdir())) == 1   # one copy, not one per name
+
+
+def test_loose_folders_next_to_an_archive_reach_the_export(tmp_path):
+    g = make_ace(tmp_path / "g", ace=True, archive=True)
+    (g / "Audio" / "BGM").mkdir(parents=True)
+    (g / "Audio" / "BGM" / "thatday.ogg").write_bytes(b"OggS-loose")
+    (g / "Audio" / "BGM" / "Theme.ogg").write_bytes(b"loose copy that must lose to the archived one")
+    (g / "Movies").mkdir(); (g / "Movies" / "op.webm").write_bytes(b"movie")
+    out = tmp_path / "out"
+    res = run(g, out, allow_no_player=True)
+    assert res.success
+    assert (out / "Audio/BGM/thatday.ogg").read_bytes() == b"OggS-loose" and (out / "Movies/op.webm").is_file()
+    assert (out / "Audio/BGM/Theme.ogg").read_bytes() == b"OggS-fake"          # archived files win
+    assert (g / "Audio/BGM/thatday.ogg").read_bytes() == b"OggS-loose"          # the original is untouched

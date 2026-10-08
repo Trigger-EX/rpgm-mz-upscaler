@@ -193,7 +193,8 @@ class UpscaleTab(QWidget):
         self.mkxp_use_btn.setToolTip("Pick a folder that already holds mkxp-z (the program, scripts/ and stdlib/).")
         self.mkxp_page_btn = QPushButton("Open download page")
         self.mkxp_fix_btn = QPushButton("Fix an existing export…")
-        self.mkxp_fix_btn.setToolTip("Re-applies the fonts, Win32API preloads and the mkxp-z player to a hires export that is already upscaled. "
+        self.mkxp_fix_btn.setToolTip("Re-applies the fonts, Win32API preloads and the mkxp-z player to a hires export that is already upscaled, and restores files "
+                                     "the original (the Game folder above) has but the export lacks, such as Audio/. "
                                      "No images are redone.")
         self.mkxp_help = QLabel("mkxp-z has no releases, only automatic builds. Alternatives: use the button above, pick a build yourself on the "
                                 "download page (the Linux x86_64 one), or build it from github.com/mkxp-z/mkxp-z. The player is copied into "
@@ -258,7 +259,8 @@ class UpscaleTab(QWidget):
         if not d:
             return
         try:
-            lines = patch.refresh_export(Path(d), self.mkxp_path)
+            src = self.src_edit.text().strip()
+            lines = patch.refresh_export(Path(d), self.mkxp_path, src if src and Path(src).is_dir() and Path(src) != Path(d) else None)
         except (ValueError, OSError) as e:
             self._append_log("error", f"fix export: {e}")
             QMessageBox.warning(self, "Fix an existing export", str(e))

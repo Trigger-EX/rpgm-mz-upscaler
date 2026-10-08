@@ -37,6 +37,24 @@ class Prepared:
             self._tmp = None
 
 
+def _merge_loose_dir(src: Path, dst: Path) -> None:
+    """Add the files of a loose folder to the extracted tree without replacing what the archive holds (hard links when the
+    filesystem allows, so a big Audio/ folder is not copied twice)."""
+    existing = {p.relative_to(dst).as_posix().lower() for p in dst.rglob("*") if p.is_file()} if dst.is_dir() else set()
+    for f in src.rglob("*"):
+        if not f.is_file() or f.is_symlink():
+            continue
+        rel = f.relative_to(src)
+        if rel.as_posix().lower() in existing:
+            continue
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.link(f, target)
+        except OSError:
+            shutil.copy2(f, target)
+
+
 def prepare(game: str | Path, on_progress: Callable[[int, int, str], None] | None = None,
             cancel: threading.Event | None = None, basics_only: bool = False) -> Prepared:
     """`basics_only` unpacks just the files needed to read the project's settings (analyze, scripts): the images stay
@@ -60,10 +78,12 @@ def prepare(game: str | Path, on_progress: Callable[[int, int, str], None] | Non
         if cancel is not None and cancel.is_set():
             shutil.rmtree(tmp, ignore_errors=True)
             raise PrepareCancelled("cancelled")
-        # keep loose files that sit next to the archive (Game.ini, audio ...); archived files win
+        # keep loose files and folders that sit next to the archive (Game.ini, a loose Audio/ or Movies/ folder ...); archived files win
         for f in info.root.iterdir():
             if f.is_file() and f.suffix.lower() not in (".rgss3a", ".rgss2a", ".rgssad"):
                 shutil.copy2(f, tmp / f.name)
+            elif f.is_dir() and not f.is_symlink() and not f.name.startswith("."):
+                _merge_loose_dir(f, tmp / f.name)
         base = tmp
     return Prepared(load_rgss_project(game, base=base, info=info), tmp)
 
