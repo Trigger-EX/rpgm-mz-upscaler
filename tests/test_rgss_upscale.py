@@ -174,7 +174,9 @@ def test_cli_rgss(tmp_path, capsys):
     assert (tmp_path / "rb/000_Game_Map.rb").read_text() == SCRIPTS[0][1]
     assert cli_main(["unpack", str(g), "-o", str(tmp_path / "x")]) == 0
     assert (tmp_path / "x/Graphics/Faces/Actor1.png").exists()
-    assert cli_main(["run", str(g), "-o", str(tmp_path / "o"), "--workers", "1"]) == 0
+    assert cli_main(["run", str(g), "-o", str(tmp_path / "o"), "--workers", "1"]) == 2    # no mkxp-z player installed: refused
+    assert "--allow-no-player" in capsys.readouterr().err
+    assert cli_main(["run", str(g), "-o", str(tmp_path / "o"), "--workers", "1", "--allow-no-player"]) == 0
     assert (tmp_path / "o/mkxp.json").exists()
     assert cli_main(["run", str(g), "-o", str(tmp_path / "o2"), "--mode", "stock640"]) == 0
     loose = make_ace(tmp_path / "loose")
@@ -239,7 +241,7 @@ def test_xp_game_is_detected_planned_and_upscaled_as_a_hires_pack(tmp_path, arch
     finally:
         prep.cleanup()
     out = tmp_path / "out"
-    assert cli_main(["run", str(g), "-o", str(out), "--no-movies"]) == 0
+    assert cli_main(["run", str(g), "-o", str(out), "--no-movies", "--allow-no-player"]) == 0
     assert imageops_size(out / "Hires/Graphics/Characters/Hero.png") == (288, 432)   # 128*2.25, 192*2.25
     cfg = json.loads((out / "mkxp.json").read_text())
     assert cfg["rgssVersion"] == 1 and cfg["enableHires"] and cfg["textureScalingFactor"] == 2.25
@@ -260,6 +262,7 @@ def test_hires_gives_missing_fonts_a_stand_in(tmp_path, monkeypatch):
     (fdir / "IPAGothic.ttf").write_bytes(b"fake")
     monkeypatch.setattr(fonts, "SYSTEM_DIRS", [str(fdir)])
     monkeypatch.setattr(fonts, "_fc_list", lambda: {})
+    monkeypatch.setattr(fonts, "japanese_fonts", lambda: [])
     assert fonts.script_font_names(['Font.default_name = "UmePlus Gothic"', "Font.default_name = ['A B', 'C']"]) == ["UmePlus Gothic", "A B", "C"]
     g = make_ace(tmp_path / "g", ace=True)
     plan = build_plan(load_rgss_project(g), Options(), "hires")

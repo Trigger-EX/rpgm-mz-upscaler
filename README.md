@@ -43,6 +43,16 @@ unpacked first (the original is never modified). Mode `stock640` is also availab
 640×480 (assets are not upscaled). RTP graphics are not part of the game folder; copy the RTP `Graphics` folder into the game
 first if you want those upscaled too (see `README-HUB.txt`, written into the output).
 
+**The player is bundled.** mkxp-z has no releases, so the Upscale tab has an **Install mkxp-z** button (CLI: `rpgm-hub mkxp install`)
+that downloads the newest Linux build once (about 20 MB, from [nightly.link](https://nightly.link/mkxp-z/mkxp-z/workflows/autobuild/dev),
+a mirror of mkxp-z's own automatic builds) into `~/.local/share/rpgm-upscaler/mkxp-z`. Every hires export then gets `Game`,
+`scripts/` and `stdlib/` copied in, so the exported folder starts with `./Game`. Without the player the hub refuses to upscale a
+VX / Ace / XP game in hires mode and says where to get it; tick *Upscale without mkxp-z* (CLI: `--allow-no-player`) to go on anyway.
+Already have it? *Use existing…* (CLI: `--mkxp-path DIR`, or `$RPGM_MKXPZ_DIR`) points at a folder; or build it from source.
+The export also enables mkxp-z's Win32API and Ruby 1.8 preload scripts, and gives a missing font (UmePlus Gothic, MS Gothic ...) a
+stand-in. Games using `TRGSSX.dll` (Tomy's *ビットマップ拡張*) get a stand-in that answers its version check so they start; what the
+DLL itself draws (rotated or blended blits, polygons, anti-aliased text) is missing. Not verified against a real TRGSSX game.
+
 ### Save editor
 Lists the saves of a game, shows **switches, variables, gold, party (level / EXP / HP / MP), inventory, map and position**
 with their names from the database, and writes changes back safely: a `.bak` backup is made first (the last five are kept),

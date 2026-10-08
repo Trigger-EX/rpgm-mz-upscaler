@@ -13,9 +13,17 @@ from pathlib import Path
 
 from ..detect import ci_child
 from . import fonts as fontmod
+from . import mkxp as mkxpmod
 from . import scripts as sc
 
 HUB_TITLE = "▼ RPGM Hub Resolution"
+
+PLAY_BUNDLED = "  Run 'Game' in this folder (double-click it, or ./Game in a terminal). The mkxp-z player is already included."
+PLAY_MANUAL = """  1. Get the mkxp-z player: RPGM Hub's Upscale tab has an 'Install mkxp-z' button, or pick a Linux build at
+     https://nightly.link/mkxp-z/mkxp-z/workflows/autobuild/dev (mkxp-z has no releases), or build it from
+     https://github.com/mkxp-z/mkxp-z
+  2. Copy the player, its scripts/ and stdlib/ folders into this folder and rename the program to 'Game' (chmod +x Game).
+  3. Run Game."""
 
 README = """RPGM Hub: HD pack for {title}
 =================================
@@ -27,12 +35,11 @@ What this folder contains
   mkxp.json            settings that tell mkxp-z to use them
 
 How to play it
-  1. Download mkxp-z (https://github.com/mkxp-z/mkxp-z/releases) for your system.
-  2. Copy mkxp-z's program files into this folder (or point mkxp-z at it).
-  3. If the original game used the RTP ({rtp}), put the RTP files somewhere and add the folder to the "RTP" list in
+{play}
+  If the original game used the RTP ({rtp}), put the RTP files somewhere and add the folder to the "RTP" list in
      mkxp.json. RTP graphics are NOT upscaled by this tool: copy the RTP's Graphics folder into this game
      first and run RPGM Hub again to get HD versions of them too.
-  4. Start mkxp-z. Press F1 in-game for its options; Alt+Enter toggles fullscreen.
+  Press F1 in-game for mkxp-z's options; Alt+Enter toggles fullscreen.
 
 The stock RPG Maker player (Game.exe) cannot draw upscaled graphics: its screen is limited to 640x480 and its map
 renderer is fixed at 32 pixel tiles. That is why an alternative player is used.
@@ -115,6 +122,20 @@ def apply_hires(plan, out: Path) -> list[str]:
         "textureScalingFactor": n, "framebufferScalingFactor": n, "atlasScalingFactor": n,
         "fixedAspectRatio": True, "winResizable": True, "smoothScaling": 1, "vsync": True,
     })
+    sources = fontmod.script_sources(plan.project.base, plan.project.scripts_path)
+    preload = [x for x in cfg.get("preloadScript", []) if isinstance(x, str)]
+    for lib in ("ruby_classic_wrap", "mkxp_wrap", "win32_wrap"):       # Win32API and Ruby 1.8 stand-ins that mkxp-z ships but leaves off
+        if f"scripts/preload/{lib}.rb" not in preload:
+            preload.append(f"scripts/preload/{lib}.rb")
+    if any("TRGSSX" in src for src in sources):
+        (out / "scripts" / "preload").mkdir(parents=True, exist_ok=True)
+        (out / "scripts" / "preload" / "hub_trgssx.rb").write_text(
+            resources.files("rpgm_upscaler.rgss").joinpath("templates/hub_trgssx.rb").read_text(encoding="utf-8"), encoding="utf-8")
+        if "scripts/preload/hub_trgssx.rb" not in preload:
+            preload.append("scripts/preload/hub_trgssx.rb")
+        plan.warnings.append("this game uses TRGSSX.dll (a Windows-only RGSS extension). A stand-in answers its version check so the game starts, "
+                             "but anything the DLL draws (rotated/blended blits, polygons, anti-aliased text) will be missing.")
+    cfg["preloadScript"] = preload
     cfg.setdefault("RTP", [])
     found = []
     for name in rtp_names(plan.project.base):                       # point mkxp-z at an RTP that is already installed
@@ -122,16 +143,27 @@ def apply_hires(plan, out: Path) -> list[str]:
         if path is not None and str(path) not in cfg["RTP"]:
             cfg["RTP"].append(str(path))
             found.append(f"{name} -> {path}")
+    bundled: list[str] = []
+    if getattr(plan.options, "bundle_player", True):
+        src = mkxpmod.locate(getattr(plan.options, "mkxp_path", ""))
+        if src is None:
+            plan.warnings.append("the mkxp-z player is not installed, so this export has no 'Game' to start. " + mkxpmod.HELP)
+        else:
+            try:
+                bundled = mkxpmod.copy_into(out, src)
+            except (mkxpmod.MkxpError, OSError) as e:
+                plan.warnings.append(f"the mkxp-z player could not be added: {e}")
     try:
-        plan.warnings.extend(fontmod.provide_fonts(plan.project.base, out, cfg, fontmod.script_sources(plan.project.base, plan.project.scripts_path)))
+        plan.warnings.extend(fontmod.provide_fonts(plan.project.base, out, cfg, sources))
     except OSError as e:
         plan.warnings.append(f"font setup failed: {e}")
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     w, h = plan.project.screen
     (out / "README-HUB.txt").write_text(README.format(title=plan.project.title or "your game", n=n, w=w, h=h, ww=round(w * n), wh=round(h * n),
-                                                      rtp={"ACE": "RPGVXAce", "VX": "RPGVX", "XP": "Standard"}[plan.project.engine]), encoding="utf-8")
+                                                      rtp={"ACE": "RPGVXAce", "VX": "RPGVX", "XP": "Standard"}[plan.project.engine],
+                                                      play=PLAY_BUNDLED if "Game" in bundled else PLAY_MANUAL), encoding="utf-8")
     plan.warnings.extend(f"RTP found and added to mkxp.json: {f}" for f in found)
-    return ["mkxp.json", "README-HUB.txt"] + (["Fonts"] if (out / "Fonts").is_dir() else [])
+    return ["mkxp.json", "README-HUB.txt"] + bundled + (["Fonts"] if (out / "Fonts").is_dir() else [])
 
 
 def render_script(width: int = 640, height: int = 480) -> str:

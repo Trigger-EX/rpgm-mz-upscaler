@@ -89,6 +89,25 @@ def _fc_list() -> dict[str, Path]:
     return out
 
 
+def japanese_fonts() -> list[Path]:
+    """Installed font files that cover Japanese (fontconfig's lang=ja), best-looking families first."""
+    if not shutil.which("fc-list"):
+        return []
+    try:
+        r = subprocess.run(["fc-list", ":lang=ja", "file", "family"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = []
+    for line in r.stdout.splitlines():
+        path = line.partition(": ")[0].strip()
+        if Path(path).suffix.lower() in FONT_EXTS and Path(path).is_file():
+            out.append(Path(path))
+    return out
+
+
+INSTALL_HINT = "install a Japanese font (Linux Mint/Ubuntu: sudo apt install fonts-noto-cjk fonts-ipafont) and run the upscale again"
+
+
 def installed_fonts(extra_dirs: list[Path] | None = None) -> dict[str, Path]:
     """normalized family or file stem -> font file (fontconfig, plus a plain scan of the usual font folders)."""
     out = _fc_list()
@@ -127,6 +146,9 @@ def pick_substitute(name: str, installed: dict[str, Path], bundled: list[Path] |
     for p in bundled or []:
         if p.is_file():
             return p
+    if cjk:
+        for p in japanese_fonts():                    # any font fontconfig says covers Japanese
+            return p
     for p in installed.values():                      # anything is better than the error box
         return p
     return None
@@ -135,6 +157,8 @@ def pick_substitute(name: str, installed: dict[str, Path], bundled: list[Path] |
 def provide_fonts(base: Path, out: Path, cfg: dict, sources: list[str], extra_dirs: list[Path] | None = None) -> list[str]:
     """Make every font the game names resolvable by mkxp-z. Returns warnings/notes."""
     notes: list[str] = []
+    if not japanese_fonts() and not any(re.search(r"cjk|ipa|gothic|takao|han", k) for k in installed_fonts(extra_dirs)):
+        notes.append("this computer has no Japanese font, so Japanese text (and mkxp-z's own error boxes) shows as squares: " + INSTALL_HINT)
     wanted = script_font_names(sources)
     names = list(dict.fromkeys(wanted + COMMON_NAMES))
     own = game_font_files(base)

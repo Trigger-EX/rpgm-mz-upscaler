@@ -204,7 +204,10 @@ class Runner:
             from . import patcher
             try:
                 hook = plan.patch_hook or patcher.apply_patches
+                seen = len(plan.warnings)
                 result.patched = hook(plan, self.out)
+                for w in plan.warnings[seen:]:                          # notes the hook itself found (fonts, RTP)
+                    self._log("warning", w)
                 for p in result.patched:
                     self._log("info", f"patched {p}")
             except Exception as e:  # noqa: BLE001
