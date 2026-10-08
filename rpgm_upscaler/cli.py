@@ -23,7 +23,7 @@ def _opts(a: argparse.Namespace) -> Options:
                    patch=not a.no_patch, reencrypt=not a.plain_images, ui_fill=a.ui_fill,
                    anchor=a.anchor, workers=a.workers, resume=not a.overwrite,
                    scale_windowskin=a.scale_windowskin, bundle_player=not a.no_player, allow_no_player=a.allow_no_player,
-                   mkxp_path=a.mkxp_path or "",
+                   mkxp_path=a.mkxp_path or "", rtp_path=a.rtp or "",
                    orig=tuple(int(x) for x in a.orig.lower().split("x")) if a.orig else None)
 
 
@@ -48,6 +48,7 @@ def _add_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-player", action="store_true", help="VX/Ace/XP hires: do not copy the mkxp-z player into the export")
     p.add_argument("--allow-no-player", action="store_true", help="VX/Ace/XP hires: upscale even though mkxp-z is not installed")
     p.add_argument("--mkxp-path", metavar="DIR", help="folder that already holds mkxp-z (default: the downloaded copy, or $RPGM_MKXPZ_DIR)")
+    p.add_argument("--rtp", metavar="DIR", help="VX/Ace/XP: the RTP folder (holds Graphics/ and Audio/), or a folder containing it, when it is not found by itself")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -94,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     a_fx = sub.add_parser("fix-export", help="re-apply the fonts, preloads and mkxp-z player of a hires export that is already upscaled (no re-upscaling)")
     a_fx.add_argument("folder")
     a_fx.add_argument("--source", metavar="ORIGINAL", help="the original game folder: files it has that the export lacks (e.g. Audio/) are copied in")
+    a_fx.add_argument("--rtp", metavar="DIR", help="the RTP folder (holds Graphics/ and Audio/), or a folder containing it")
     a_fx.add_argument("--mkxp-path", metavar="DIR", help="folder that already holds mkxp-z (default: the downloaded copy)")
     a_tr = sub.add_parser("translate", help="offline Japanese -> English: TEXT... | --file F | install | import PATH | status")
     a_tr.add_argument("items", nargs="*")
@@ -125,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "fix-export":
         from .rgss import patch
         try:
-            for line in patch.refresh_export(args.folder, args.mkxp_path or "", args.source):
+            for line in patch.refresh_export(args.folder, args.mkxp_path or "", args.source, args.rtp or ""):
                 print(line)
         except (ValueError, OSError) as e:
             print("error:", e, file=sys.stderr)

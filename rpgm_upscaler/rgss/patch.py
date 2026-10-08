@@ -83,15 +83,37 @@ def rtp_names(base: Path) -> list[str]:
     return out
 
 
+def wine_prefixes() -> list[Path]:
+    """Wine prefixes where a Windows RTP installer may have put the RTP: $WINEPREFIX, ~/.wine, Lutris (~/Games/*), Steam Proton,
+    Bottles, PlayOnLinux, and the Flatpak Lutris. A prefix is a folder with drive_c; one level of `prefix`/`pfx` is looked into."""
+    home = Path.home()
+    roots = [Path(os.environ["WINEPREFIX"])] if os.environ.get("WINEPREFIX") else []
+    roots.append(home / ".wine")
+    parents = [home / "Games", home / ".local/share/Steam/steamapps/compatdata", home / ".steam/steam/steamapps/compatdata",
+               home / ".local/share/bottles/bottles", home / ".PlayOnLinux/wineprefix",
+               home / ".var/app/net.lutris.Lutris/data/lutris/prefixes", home / ".local/share/lutris/prefixes",
+               home / ".var/app/com.usebottles.bottles/data/bottles/bottles", home / "Games/Heroic/Prefixes/default"]
+    for par in parents:
+        try:
+            roots += sorted(p for p in par.iterdir() if p.is_dir())
+        except OSError:
+            pass
+    out, seen = [], set()
+    for r in roots:
+        for cand in (r, r / "prefix", r / "pfx", r / "wine_prefix"):
+            if (cand / "drive_c").is_dir() and cand not in seen:
+                seen.add(cand)
+                out.append(cand)
+    return out
+
+
 def find_rtp(name: str, engine: str, extra: list[str] | None = None) -> Path | None:
     """Look for an installed RTP package folder (the one holding Graphics/ and Audio/) in the places Linux users keep it:
     $RPGM_RTP, a Wine prefix (the Windows installer's `Common Files/Enterbrain` folder), ~/RTP, ~/.local/share/rtp, /usr/share."""
     roots: list[Path] = [Path(x) for x in (extra or [])]
     roots += [Path(x) for x in os.environ.get("RPGM_RTP", "").split(os.pathsep) if x]
     home = Path.home()
-    prefixes = [Path(os.environ["WINEPREFIX"])] if os.environ.get("WINEPREFIX") else []
-    prefixes += [home / ".wine"]
-    for pre in prefixes:
+    for pre in wine_prefixes():
         for pf in ("Program Files (x86)", "Program Files"):
             for sub in _RTP_DIRS.get(engine, ()):
                 roots.append(pre / "drive_c" / pf / "Common Files" / sub)
@@ -137,12 +159,24 @@ def apply_hires(plan, out: Path) -> list[str]:
                              "but anything the DLL draws (rotated/blended blits, polygons, anti-aliased text) will be missing.")
     cfg["preloadScript"] = preload
     cfg.setdefault("RTP", [])
-    found = []
+    found, missing = [], []
+    mine = getattr(plan.options, "rtp_path", "")
+    if mine and (ci_child(Path(mine), "Graphics") is not None) and mine not in cfg["RTP"]:    # the folder itself is an RTP package
+        cfg["RTP"].append(mine)
+        found.append(f"{mine} (chosen by you)")
     for name in rtp_names(plan.project.base):                       # point mkxp-z at an RTP that is already installed
-        path = find_rtp(name, plan.project.engine)
+        path = find_rtp(name, plan.project.engine, [mine] if mine else None)
         if path is not None and str(path) not in cfg["RTP"]:
             cfg["RTP"].append(str(path))
             found.append(f"{name} -> {path}")
+        elif path is None and not cfg["RTP"]:
+            missing.append(name)
+    if missing:
+        plan.warnings.append(
+            f"this game uses the {', '.join(missing)} RTP (shared RPG Maker assets such as Graphics/Characters/Vehicle), which is not in the game folder "
+            "and was not found on this computer. mkxp-z will stop with 'file ... not found' on the first RTP asset. Point the hub at it: "
+            "'RTP folder' in the mkxp-z box (CLI: --rtp DIR), or put it in ~/RTP/" + missing[0] + ". It is the folder holding Graphics/ and Audio/ "
+            "(the Windows RTP installer puts it in Program Files/Common Files/Enterbrain/RGSS2/RPGVX inside a Wine/Lutris prefix).")
     bundled: list[str] = []
     if getattr(plan.options, "bundle_player", True):
         src = mkxpmod.locate(getattr(plan.options, "mkxp_path", ""))
@@ -181,7 +215,7 @@ def restore_missing_files(out: Path, source: Path) -> int:
     return sum(1 for p in out.rglob("*") if p.is_file()) - before
 
 
-def refresh_export(out: Path, mkxp_path: str = "", source: str | Path | None = None) -> list[str]:
+def refresh_export(out: Path, mkxp_path: str = "", source: str | Path | None = None, rtp_path: str = "") -> list[str]:
     """Re-run the cheap steps of a hires export on a folder that is already upscaled (no images are touched): the mkxp.json
     keys, Win32API preloads and the TRGSSX stand-in, the font stand-ins, the bundled mkxp-z player and README-HUB.txt.
     Returns what was done plus the warnings found."""
@@ -203,7 +237,7 @@ def refresh_export(out: Path, mkxp_path: str = "", source: str | Path | None = N
         pass
     n = cfg.get("textureScalingFactor") or 2
     have_player = (out / "Game").is_file()
-    opts = Options(mkxp_path=mkxp_path, bundle_player=not have_player or mkxpmod.locate(mkxp_path) is not None)
+    opts = Options(mkxp_path=mkxp_path, rtp_path=rtp_path, bundle_player=not have_player or mkxpmod.locate(mkxp_path) is not None)
     plan = SimpleNamespace(project=project, options=opts, warnings=[], scale=SimpleNamespace(n=n))
     done = apply_hires(plan, out)
     notes = [f"updated {', '.join(done)}"]

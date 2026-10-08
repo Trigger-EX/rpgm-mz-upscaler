@@ -204,6 +204,8 @@ class UpscaleTab(QWidget):
         self.mkxp_help.setWordWrap(True)
         self.mkxp_bundle = QCheckBox("Include the player in the export"); self.mkxp_bundle.setChecked(True)
         self.mkxp_skip = QCheckBox("Upscale without mkxp-z (I will add the player myself)")
+        self.rtp_edit = QLineEdit(); self.rtp_edit.setPlaceholderText("RTP folder (optional: holds Graphics/ and Audio/; searched for in Wine/Lutris prefixes if empty)")
+        self.rtp_browse = QPushButton("Browse…")
         self.mkxp_progress = QProgressBar(); self.mkxp_progress.setVisible(False)
         self.mkxp_path = ""
         g.addWidget(self.mkxp_status, 0, 0, 1, 4)
@@ -212,6 +214,7 @@ class UpscaleTab(QWidget):
         g.addWidget(self.mkxp_help, 2, 0, 1, 4)
         g.addWidget(self.mkxp_bundle, 3, 0, 1, 2); g.addWidget(self.mkxp_skip, 3, 2, 1, 2)
         g.addWidget(self.mkxp_fix_btn, 4, 0, 1, 2)
+        g.addWidget(QLabel("RTP folder:"), 5, 0); g.addWidget(self.rtp_edit, 5, 1, 1, 2); g.addWidget(self.rtp_browse, 5, 3)
         self.mkxp_box.setVisible(False)                 # shown once a VX / Ace / XP game is analysed
         v.addWidget(self.mkxp_box)
         self._mkxp_worker = None
@@ -219,6 +222,7 @@ class UpscaleTab(QWidget):
         self.mkxp_use_btn.clicked.connect(self._use_existing_mkxp)
         self.mkxp_page_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(mkxp.PAGE)))
         self.mkxp_fix_btn.clicked.connect(self._fix_export)
+        self.rtp_browse.clicked.connect(lambda: self._browse(self.rtp_edit))
         self.mkxp_bundle.toggled.connect(lambda _on: self.update_mkxp_status())
         self.mkxp_skip.toggled.connect(lambda _on: self.update_mkxp_status())
 
@@ -262,7 +266,8 @@ class UpscaleTab(QWidget):
             return
         try:
             src = self.src_edit.text().strip()
-            lines = patch.refresh_export(Path(d), self.mkxp_path, src if src and Path(src).is_dir() and Path(src) != Path(d) else None)
+            lines = patch.refresh_export(Path(d), self.mkxp_path, src if src and Path(src).is_dir() and Path(src) != Path(d) else None,
+                                         self.rtp_edit.text().strip())
         except (ValueError, OSError) as e:
             self._append_log("error", f"fix export: {e}")
             QMessageBox.warning(self, "Fix an existing export", str(e))
@@ -298,7 +303,7 @@ class UpscaleTab(QWidget):
                        patch=self.patch.isChecked(), reencrypt=self.reenc.isChecked(),
                        scale_windowskin=self.winskin.isChecked(), ui_fill=self.ui_fill.isChecked(),
                        anchor=self.anchor.currentText(), workers=self.workers.value(), resume=self.resume.isChecked(),
-                       bundle_player=self.mkxp_bundle.isChecked(), allow_no_player=self.mkxp_skip.isChecked(), mkxp_path=self.mkxp_path)
+                       bundle_player=self.mkxp_bundle.isChecked(), allow_no_player=self.mkxp_skip.isChecked(), mkxp_path=self.mkxp_path, rtp_path=self.rtp_edit.text().strip())
 
     def _load_settings(self) -> None:
         s = load_settings()
@@ -314,7 +319,7 @@ class UpscaleTab(QWidget):
         self.winskin.setChecked(o.scale_windowskin); self.ui_fill.setChecked(o.ui_fill)
         self.anchor.setCurrentText(o.anchor); self.workers.setValue(o.workers); self.resume.setChecked(o.resume)
         self._saved_resamplers, self._saved_skip = o.resamplers, o.skip
-        self.mkxp_bundle.setChecked(o.bundle_player); self.mkxp_skip.setChecked(o.allow_no_player); self.mkxp_path = o.mkxp_path
+        self.mkxp_bundle.setChecked(o.bundle_player); self.mkxp_skip.setChecked(o.allow_no_player); self.mkxp_path = o.mkxp_path; self.rtp_edit.setText(o.rtp_path)
         self.update_mkxp_status()
         self.update_engine_status()
 

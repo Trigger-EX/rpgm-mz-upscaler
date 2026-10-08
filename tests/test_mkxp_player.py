@@ -212,3 +212,28 @@ def test_fix_export_restores_audio_the_export_lacks(tmp_path):
     assert (out / "Audio" / "SE" / "hit.ogg").read_bytes() == b"se"
     assert (out / "Audio" / "BGM" / "Theme.ogg").read_bytes() == b"export copy"      # existing files are never replaced
     assert any("restored 1 file" in n for n in notes)
+
+
+def test_rtp_is_found_in_a_lutris_prefix_and_a_missing_rtp_is_reported(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home")); monkeypatch.delenv("WINEPREFIX", raising=False); monkeypatch.delenv("RPGM_RTP", raising=False)
+    g = make_ace(tmp_path / "g", ace=False)                      # Game.ini asks for the RPGVX RTP
+    plan = build_plan(load_rgss_project(g), Options(), "hires")
+    out = tmp_path / "out1"; out.mkdir()
+    patch.apply_hires(plan, out)
+    warn = [w for w in plan.warnings if "RTP" in w and "not found" in w]
+    assert warn and "RPGVX" in warn[0] and "Characters/Vehicle" in warn[0] and "--rtp" in warn[0]
+
+    rtp = tmp_path / "home/Games/my-game/drive_c/Program Files (x86)/Common Files/Enterbrain/RGSS2/RPGVX"
+    (rtp / "Graphics" / "Characters").mkdir(parents=True)
+    assert patch.wine_prefixes() == [tmp_path / "home/Games/my-game"]
+    plan = build_plan(load_rgss_project(g), Options(), "hires")
+    out = tmp_path / "out2"; out.mkdir()
+    patch.apply_hires(plan, out)
+    assert json.loads((out / "mkxp.json").read_text())["RTP"] == [str(rtp)]
+    assert not any("not found" in w and "RTP" in w for w in plan.warnings)
+
+    mine = tmp_path / "elsewhere" / "VXRTP"; (mine / "Graphics").mkdir(parents=True)
+    plan = build_plan(load_rgss_project(g), Options(rtp_path=str(mine)), "hires")
+    out = tmp_path / "out3"; out.mkdir()
+    patch.apply_hires(plan, out)
+    assert json.loads((out / "mkxp.json").read_text())["RTP"][0] == str(mine)

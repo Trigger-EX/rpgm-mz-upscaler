@@ -53,6 +53,11 @@ The export also enables mkxp-z's Win32API and Ruby 1.8 preload scripts, and give
 stand-in. Games using `TRGSSX.dll` (Tomy's *ビットマップ拡張*) get a stand-in that answers its version check so they start; what the
 DLL itself draws (rotated or blended blits, polygons, anti-aliased text) is missing. Not verified against a real TRGSSX game.
 
+**RTP assets** (e.g. `Graphics/Characters/Vehicle`, the boat and airship sprites) are not in a VX / Ace game's folder: the stock player finds them
+through the Windows registry, mkxp-z needs a path in `mkxp.json`. The hub looks for an installed RTP in Wine prefixes (`~/.wine`, Lutris
+`~/Games/*`, Proton, Bottles, PlayOnLinux), `$RPGM_RTP`, `~/RTP`; if it finds none it warns, and you can point at it with *RTP folder* in
+the mkxp-z box (CLI: `--rtp DIR`, also for `fix-export`).
+
 **Already upscaled?** `rpgm-hub fix-export FOLDER` (or *Fix an existing export…* in the mkxp-z box) re-applies the fonts, the Win32API
 preloads, the TRGSSX stand-in and the mkxp-z player to a finished hires export, without redoing any image. Add `--source ORIGINAL_GAME`
 to also copy in files the export lacks (e.g. a loose `Audio/` folder that older versions dropped for archived games).
