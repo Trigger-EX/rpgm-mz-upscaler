@@ -1,7 +1,7 @@
 import sys
 
 
-CLI_COMMANDS = {"analyze", "plan", "run", "unpack", "scripts", "detect", "saves", "translate", "translate-game"}
+CLI_COMMANDS = {"analyze", "plan", "run", "unpack", "scripts", "detect", "saves", "translate", "translate-game", "mkxp"}
 
 
 def main() -> int:

@@ -245,3 +245,24 @@ class GameTranslateWorker(QThread):
                                                   progress=self.progress.emit, cancel=self._cancel))
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
+
+
+class MkxpInstallWorker(QThread):
+    """Downloads the mkxp-z player once (see rgss/mkxp.py)."""
+    progress = Signal(int, int)             # bytes done, total (0 = unknown)
+    finished_run = Signal(str)              # folder of the installed player
+    failed = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    def run(self) -> None:
+        from ..rgss import mkxp
+        try:
+            self.finished_run.emit(str(mkxp.install(self.progress.emit, self._cancel)))
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))

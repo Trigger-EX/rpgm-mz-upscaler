@@ -25,11 +25,14 @@ class Options:
     anchor: str = "center"
     workers: int = 0
     resume: bool = True
+    bundle_player: bool = True         # VX/Ace/XP hires: copy the mkxp-z player into the export
+    allow_no_player: bool = False      # upscale even though no mkxp-z player is installed
+    mkxp_path: str = ""                # a folder that already holds mkxp-z (else the downloaded copy)
     orig: tuple[int, int] | None = None   # the resolution the game was authored for, when it cannot be detected
 
     def digest(self, n: float) -> str:
         d = asdict(self)
-        for k in ("workers", "resume", "patch"):
+        for k in ("workers", "resume", "patch", "bundle_player", "allow_no_player", "mkxp_path"):
             d.pop(k)
         d["n"] = n
         return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:12]

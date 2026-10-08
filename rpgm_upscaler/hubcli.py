@@ -183,6 +183,12 @@ def run_rgss_command(args, info, opts) -> int:
             finally:
                 prep.cleanup()
             return 0
+        if args.cmd == "run":
+            from .rgss import mkxp
+            problem = mkxp.requirement(info.engine, args.mode, opts, cli=True)
+            if problem:
+                print("error:", problem, file=sys.stderr)
+                return 2
         prep = pipeline.prepare(args.game)
         try:
             if args.cmd == "plan":

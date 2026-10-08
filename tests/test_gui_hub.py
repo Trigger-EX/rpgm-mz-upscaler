@@ -145,6 +145,7 @@ def test_hub_upscale_tab_handles_vx_ace(hub, tmp_path):
     assert up.plan.mode == "hires" and "VX Ace" in up.info.text() and not up.vx_mode.isHidden()
     up.out_edit.setText(str(tmp_path / "out"))
     up.movies.setChecked(False); up.workers.setValue(1)
+    up.mkxp_skip.setChecked(True)                     # no mkxp-z player in the test environment
     up.table.selectRow(0)
     assert up.files.count() > 0
     up.files.setCurrentRow(0)
@@ -319,3 +320,26 @@ def test_finished_runs_make_their_output_the_open_game(hub, tmp_path):
     assert str(hub.ctx.info.root) == str(tr_out)
     assert hub.upscale.src_edit.text() == str(tr_out)
     assert hub.game_translate.out_edit.text().endswith("g_1080p_EN")   # not g_1080p_EN_EN
+
+
+def test_upscale_refuses_without_mkxp_unless_overridden(hub, tmp_path, monkeypatch):
+    from rpgm_upscaler.gui import upscale_tab
+    from tests.fakeace import make_ace
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data")); monkeypatch.delenv("RPGM_MKXPZ_DIR", raising=False)
+    shown = []
+    monkeypatch.setattr(upscale_tab.QMessageBox, "warning", lambda *a, **k: shown.append(a[2]))
+    monkeypatch.setattr(upscale_tab.QMessageBox, "critical", lambda *a, **k: shown.append(a[2]))
+    g = make_ace(tmp_path / "g", ace=True)
+    up = hub.upscale
+    up.src_edit.setText(str(g)); up.out_edit.setText(str(tmp_path / "out"))
+    up.vx_mode.setCurrentText("hires")
+    up.update_mkxp_status()
+    assert "NOT installed" in up.mkxp_status.text() and up.mkxp_install_btn.text() == "Install mkxp-z"
+    up.start()
+    assert up.worker is None and shown and "mkxp-z player is not installed" in shown[0] and "Install mkxp-z" in shown[0]
+    up.mkxp_skip.setChecked(True)
+    shown.clear()
+    up.start()
+    assert not any("mkxp-z player is not installed" in m for m in shown)         # the override lets it go on
+    if up.worker is not None:
+        up.worker.cancel(); up.worker.wait(30000)

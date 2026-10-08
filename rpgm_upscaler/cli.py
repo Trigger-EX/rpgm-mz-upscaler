@@ -22,7 +22,8 @@ def _opts(a: argparse.Namespace) -> Options:
                    model=a.model or "", resamplers=res, skip=a.skip or [], movies=not a.no_movies,
                    patch=not a.no_patch, reencrypt=not a.plain_images, ui_fill=a.ui_fill,
                    anchor=a.anchor, workers=a.workers, resume=not a.overwrite,
-                   scale_windowskin=a.scale_windowskin,
+                   scale_windowskin=a.scale_windowskin, bundle_player=not a.no_player, allow_no_player=a.allow_no_player,
+                   mkxp_path=a.mkxp_path or "",
                    orig=tuple(int(x) for x in a.orig.lower().split("x")) if a.orig else None)
 
 
@@ -44,6 +45,9 @@ def _add_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--anchor", default="center", choices=["center", "topleft"])
     p.add_argument("--workers", type=int, default=0)
     p.add_argument("--overwrite", action="store_true")
+    p.add_argument("--no-player", action="store_true", help="VX/Ace/XP hires: do not copy the mkxp-z player into the export")
+    p.add_argument("--allow-no-player", action="store_true", help="VX/Ace/XP hires: upscale even though mkxp-z is not installed")
+    p.add_argument("--mkxp-path", metavar="DIR", help="folder that already holds mkxp-z (default: the downloaded copy, or $RPGM_MKXPZ_DIR)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     s_set.add_argument("--actor", action="append", default=[], metavar="ID:level|exp|hp|mp|name=VALUE")
     s_set.add_argument("--map", type=int)
     s_set.add_argument("--pos", metavar="X,Y")
+    a_mk = sub.add_parser("mkxp", help="the mkxp-z player for VX / VX Ace / XP hires exports: status | install")
+    a_mk.add_argument("action", choices=["status", "install"])
     a_tr = sub.add_parser("translate", help="offline Japanese -> English: TEXT... | --file F | install | import PATH | status")
     a_tr.add_argument("items", nargs="*")
     a_tr.add_argument("--file", help="translate each line of a UTF-8 text file")
@@ -112,6 +118,26 @@ def main(argv: list[str] | None = None) -> int:
     a_tg.add_argument("--beam", type=int, choices=[1, 2, 3, 4, 5], help="model search width (default 4; --fast is 1)")
     a_tg.add_argument("--workers", type=int, default=0, help="parallel image workers (default: auto)")
     args = ap.parse_args(argv)
+    if args.cmd == "mkxp":
+        from .rgss import mkxp
+        if args.action == "install":
+            last = [-1]
+
+            def show(done: int, total: int) -> None:
+                pct = done * 100 // total if total else done >> 20          # percent, or MB when the size is unknown
+                if pct != last[0]:
+                    last[0] = pct
+                    print(f"\rdownloading {pct}{'%' if total else ' MB'}", end="", file=sys.stderr)
+            try:
+                where = mkxp.install(show)
+            except mkxp.MkxpError as e:
+                print("\nerror:", e, file=sys.stderr)
+                return 2
+            print(f"\ninstalled in {where}")
+            return 0
+        where = mkxp.locate()
+        print(f"installed: {where} {mkxp.version(where)}" if where else "not installed. " + mkxp.HELP)
+        return 0 if where else 1
     if args.cmd in ("detect", "saves", "translate", "translate-game", "unpack", "scripts"):
         from .hubcli import run_hub_command
         return run_hub_command(args)
