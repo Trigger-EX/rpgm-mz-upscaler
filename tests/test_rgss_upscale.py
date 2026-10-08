@@ -260,6 +260,7 @@ def test_hires_gives_missing_fonts_a_stand_in(tmp_path, monkeypatch):
     (fdir / "IPAGothic.ttf").write_bytes(b"fake")
     monkeypatch.setattr(fonts, "SYSTEM_DIRS", [str(fdir)])
     monkeypatch.setattr(fonts, "_fc_list", lambda: {})
+    monkeypatch.setattr(fonts, "japanese_fonts", lambda: [])
     assert fonts.script_font_names(['Font.default_name = "UmePlus Gothic"', "Font.default_name = ['A B', 'C']"]) == ["UmePlus Gothic", "A B", "C"]
     g = make_ace(tmp_path / "g", ace=True)
     plan = build_plan(load_rgss_project(g), Options(), "hires")
