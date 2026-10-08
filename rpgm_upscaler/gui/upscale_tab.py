@@ -95,7 +95,7 @@ class UpscaleTab(QWidget):
         self.scale = QComboBox(); self.scale.setEditable(True); self.scale.addItems(SCALES)
         self.engine = QComboBox(); self.engine.addItems([*engines.PILLOW_ENGINES, *engines.NCNN_ENGINES])
         self.engine_path = QLineEdit(); self.engine_path.setPlaceholderText("AI engine binary (optional, else PATH)")
-        self.model = QLineEdit(); self.model.setPlaceholderText("model (optional)")
+        self.model = QComboBox(); self.model.setEditable(True); self.model.setToolTip("Model of the selected AI engine (you can type another one)")
         self.engine_status = QLabel()
         self.movies = QCheckBox("Scale movies"); self.movies.setChecked(True)
         self.patch = QCheckBox("Patch engine for 1920x1080"); self.patch.setChecked(True)
@@ -130,6 +130,8 @@ class UpscaleTab(QWidget):
         self.anchor.currentTextChanged.connect(self.update_scale_info)
         self.ui_fill.toggled.connect(self.update_scale_info)
         self.engine.currentTextChanged.connect(self.update_engine_status)
+        self.engine.currentTextChanged.connect(self._fill_models)
+        self._fill_models()
         self.engine_path.editingFinished.connect(self.update_engine_status)
 
         # folders table + preview
@@ -292,7 +294,7 @@ class UpscaleTab(QWidget):
                 skip.append(name)
         return Options(target=(self.tw.value(), self.th.value()), scale=self.scale.currentText().strip() or "fit",
                        engine=self.engine.currentText(), engine_path=self.engine_path.text().strip(),
-                       model=self.model.text().strip(), resamplers=res, skip=skip, movies=self.movies.isChecked(),
+                       model=self.model.currentText().strip() if self.model.isEnabled() else "", resamplers=res, skip=skip, movies=self.movies.isChecked(),
                        patch=self.patch.isChecked(), reencrypt=self.reenc.isChecked(),
                        scale_windowskin=self.winskin.isChecked(), ui_fill=self.ui_fill.isChecked(),
                        anchor=self.anchor.currentText(), workers=self.workers.value(), resume=self.resume.isChecked(),
@@ -304,7 +306,10 @@ class UpscaleTab(QWidget):
         o = Options.from_dict(s.get("options", {}))
         self.tw.setValue(o.target[0]); self.th.setValue(o.target[1])
         self.scale.setCurrentText(o.scale); self.engine.setCurrentText(o.engine)
-        self.engine_path.setText(o.engine_path); self.model.setText(o.model)
+        self._fill_models()
+        self.engine_path.setText(o.engine_path)
+        if o.model:
+            self.model.setCurrentText(o.model)
         self.movies.setChecked(o.movies); self.patch.setChecked(o.patch); self.reenc.setChecked(o.reencrypt)
         self.winskin.setChecked(o.scale_windowskin); self.ui_fill.setChecked(o.ui_fill)
         self.anchor.setCurrentText(o.anchor); self.workers.setValue(o.workers); self.resume.setChecked(o.resume)
@@ -316,6 +321,14 @@ class UpscaleTab(QWidget):
     def _save_settings(self) -> None:
         from dataclasses import asdict
         save_settings({"source": self.src_edit.text(), "output": self.out_edit.text(), "options": asdict(self.options())})
+
+    def _fill_models(self) -> None:
+        """List the models of the selected engine (default first); engines without models get a disabled box."""
+        models = engines.NCNN_MODELS.get(self.engine.currentText(), ())
+        self.model.clear(); self.model.addItems(models)
+        self.model.setEnabled(bool(models))
+        if not models:
+            self.model.setCurrentText("")
 
     def update_engine_status(self) -> None:
         name = self.engine.currentText()

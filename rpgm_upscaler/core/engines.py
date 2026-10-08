@@ -16,6 +16,11 @@ from .imageops import bleed_rgb
 
 PILLOW_ENGINES = ("lanczos", "nearest", "sharp")
 NCNN_ENGINES = {"realesrgan": "realesrgan-ncnn-vulkan", "waifu2x": "waifu2x-ncnn-vulkan"}
+# Models each AI engine ships with, default first. Pillow engines have no models.
+NCNN_MODELS = {
+    "realesrgan": ("realesr-animevideov3-x4", "realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-general-x4v3"),
+    "waifu2x": ("models-cunet", "models-upconv_7_anime_style_art_rgb", "models-upconv_7_photo"),
+}
 RESAMPLERS = ("default",) + PILLOW_ENGINES
 
 

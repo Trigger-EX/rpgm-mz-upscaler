@@ -95,3 +95,16 @@ def test_closing_during_a_run_cancels_it_cleanly_and_a_no_keeps_it_running(tmp_p
     assert w.tab.shutdown() is True
     assert w.worker is None or not w.worker.isRunning()
     w.close()
+
+
+def test_model_dropdown_follows_the_engine(tmp_path, monkeypatch):
+    w = _window(tmp_path, monkeypatch)
+    w.engine.setCurrentText("lanczos")
+    assert not w.model.isEnabled() and w.options().model == ""
+    w.engine.setCurrentText("realesrgan")
+    assert w.model.isEnabled() and w.model.itemText(0) == "realesr-animevideov3-x4"
+    w.model.setCurrentText("realesrgan-x4plus-anime")
+    assert w.options().model == "realesrgan-x4plus-anime"
+    w.engine.setCurrentText("waifu2x")
+    assert w.model.currentText() == "models-cunet"
+    w.close()
