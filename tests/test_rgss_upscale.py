@@ -264,10 +264,14 @@ def test_hires_gives_missing_fonts_a_stand_in(tmp_path, monkeypatch):
     monkeypatch.setattr(fonts, "_fc_list", lambda: {})
     monkeypatch.setattr(fonts, "japanese_fonts", lambda: [])
     assert fonts.script_font_names(['Font.default_name = "UmePlus Gothic"', "Font.default_name = ['A B', 'C']"]) == ["UmePlus Gothic", "A B", "C"]
+    assert fonts.script_font_names(['unless Font.exist?("Foo Sans")\n  msgbox "x.png"\nend', 'n = "Meiryo"', 'a = "Other"']) == ["Foo Sans", "Meiryo"]
+    assert fonts._style_rank("Regular") == 0 and fonts._style_rank("Italic") == 2 and fonts._style_rank("Bold Italic") == 2
     g = make_ace(tmp_path / "g", ace=True)
     plan = build_plan(load_rgss_project(g), Options(), "hires")
     out = tmp_path / "out"; out.mkdir()
     patch.apply_hires(plan, out)
     cfg = json.loads((out / "mkxp.json").read_text())
-    assert "UmePlus Gothic>IPAGothic" in cfg["fontSub"] and "MS Gothic>IPAGothic" in cfg["fontSub"]
-    assert (out / "Fonts" / "IPAGothic.ttf").is_file()
+    # mkxp-z lowercases the requested name but keeps the config keys as written, so keys and targets must be lowercase
+    assert "umeplus gothic>ipagothic" in cfg["fontSub"] and "ms gothic>ipagothic" in cfg["fontSub"]
+    assert all(x == x.lower() for x in cfg["fontSub"])
+    assert (out / "Fonts" / "IPAGothic.ttf").is_file() and len(list((out / "Fonts").iterdir())) == 1   # one copy, not one per name

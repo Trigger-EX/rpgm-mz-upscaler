@@ -38,10 +38,10 @@ COMMON_NAMES = [
 ]
 
 # Substitute candidates, best coverage first: CJK families (they also cover Latin) then Latin ones.
-CJK_SUBS = ["Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans", "IPAexGothic", "IPAGothic", "IPAPGothic", "VL Gothic",
+CJK_SUBS = ["IPAexGothic", "IPAGothic", "IPAPGothic", "VL Gothic", "Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans",
             "VL PGothic", "Takao Gothic", "TakaoPGothic", "Sazanami Gothic", "Kochi Gothic", "Unifont", "WenQuanYi Zen Hei",
             "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK KR"]
-SERIF_SUBS = ["Noto Serif CJK JP", "Noto Serif JP", "Source Han Serif", "IPAexMincho", "IPAMincho", "IPAPMincho",
+SERIF_SUBS = ["IPAexMincho", "IPAMincho", "IPAPMincho", "Noto Serif CJK JP", "Noto Serif JP", "Source Han Serif",
               "Takao Mincho", "TakaoMincho", "Sazanami Mincho", "Kochi Mincho"]
 LATIN_SUBS = ["Liberation Sans", "DejaVu Sans", "FreeSans", "Noto Sans", "Inter"]
 MONO_SUBS = ["Liberation Mono", "DejaVu Sans Mono", "FreeMono", "Noto Sans Mono"]
@@ -59,34 +59,74 @@ def _norm(name: str) -> str:
 
 
 def script_font_names(sources: list[str]) -> list[str]:
-    """Font names literally written in scripts: Font.default_name = ..., Font.new(...), `.name = ...` and font-ish constants."""
+    """Font names literally written in scripts: any quoted text on a line that mentions Font/font (Font.exist?, default_name,
+    Font.new, .name =, FONT_NAME ...), and any literal that is one of the well-known names."""
     found: dict[str, None] = {}
+    known = {n.lower() for n in COMMON_NAMES}
 
     def add(raw: str) -> None:
-        s = raw.strip()
-        if s and len(s) < 64 and not re.search(r"[\\/#{}\n]", s):
-            found.setdefault(s)
+        t = raw.strip()
+        if t and len(t) < 64 and not re.search(r"[\\/#{}\n]|\.(png|jpg|bmp|ogg|rb|txt|ini)$", t, re.I):
+            found.setdefault(t)
 
     for src in sources:
-        for mt in re.finditer(r"(?:default_name|\bFont\.new|\.name|\bfont_?name\w*|\bFONT\w*)\s*(?:=|\()\s*(\[[^\]]*\]|" + _STR + ")", src, re.I):
-            for lit in re.finditer(_STR, mt.group(1)):
-                add(lit.group(1) or lit.group(2) or "")
+        for line in src.splitlines():
+            if re.search(r"font", line, re.I):
+                for lit in re.finditer(_STR, line):
+                    add(lit.group(1) or lit.group(2) or "")
+            else:
+                for lit in re.finditer(_STR, line):
+                    text = lit.group(1) or lit.group(2) or ""
+                    if text.strip().lower() in known:
+                        add(text)
     return list(found)
 
 
+_BAD_STYLE = re.compile(r"italic|oblique|bold|black|light|thin|condensed|narrow|semi|extra|heavy|demi", re.I)
+
+
+def _style_rank(style: str) -> int:
+    """0 = plain Regular/Book, 1 = unknown style, 2 = italic/bold/... (never a stand-in unless nothing else exists)."""
+    if re.fullmatch(r"\s*(regular|book|roman|normal|medium)?\s*", style, re.I):
+        return 0
+    return 2 if _BAD_STYLE.search(style) else 1
+
+
 def _fc_list() -> dict[str, Path]:
-    """normalized family -> file, through fontconfig when it exists."""
-    out: dict[str, Path] = {}
+    """normalized family -> its Regular file, through fontconfig when it exists."""
+    best: dict[str, tuple[int, Path]] = {}
     if shutil.which("fc-list"):
         try:
-            r = subprocess.run(["fc-list", ":", "family", "file"], capture_output=True, text=True, timeout=20)
+            r = subprocess.run(["fc-list", ":", "family", "style", "file"], capture_output=True, text=True, timeout=20)
         except (OSError, subprocess.SubprocessError):
-            return out
+            return {}
         for line in r.stdout.splitlines():
-            path, _, fam = line.partition(": ")
+            path, _, rest = line.partition(": ")
+            fam, _, style = rest.partition(":style=")
+            rank = _style_rank(style.split(",")[0])
             for f in fam.split(","):
-                out.setdefault(_norm(f.split(":")[0]), Path(path))
-    return out
+                key = _norm(f)
+                if key and (key not in best or rank < best[key][0]):
+                    best[key] = (rank, Path(path))
+    return {k: v[1] for k, v in best.items()}
+
+
+def font_family(path: Path) -> str:
+    """The family name mkxp-z will know this file by (lowercase): fontconfig's first family, else Pillow's, else the file name.
+    mkxp-z keys fonts by the name stored inside the file, never by the file name."""
+    if shutil.which("fc-scan"):
+        try:
+            r = subprocess.run(["fc-scan", "--format", "%{family[0]}\\n", str(path)], capture_output=True, text=True, timeout=20)
+            first = r.stdout.splitlines()[0].strip() if r.stdout.strip() else ""
+            if first:
+                return first.lower()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        from PIL import ImageFont
+        return ImageFont.truetype(str(path), 12).getname()[0].lower()
+    except Exception:  # noqa: BLE001
+        return path.stem.lower()
 
 
 def japanese_fonts() -> list[Path]:
@@ -115,8 +155,8 @@ def installed_fonts(extra_dirs: list[Path] | None = None) -> dict[str, Path]:
     for d in dirs:
         if not d.is_dir():
             continue
-        for p in d.rglob("*"):
-            if p.suffix.lower() in FONT_EXTS and p.is_file():
+        for p in sorted(d.rglob("*")):
+            if p.suffix.lower() in FONT_EXTS and p.is_file() and _style_rank(p.stem.rpartition("-")[2]) < 2:
                 out.setdefault(_norm(p.stem), p)
     return out
 
@@ -155,52 +195,61 @@ def pick_substitute(name: str, installed: dict[str, Path], bundled: list[Path] |
 
 
 def provide_fonts(base: Path, out: Path, cfg: dict, sources: list[str], extra_dirs: list[Path] | None = None) -> list[str]:
-    """Make every font the game names resolvable by mkxp-z. Returns warnings/notes."""
+    """Make every font the game names resolvable by mkxp-z. Returns warnings/notes.
+
+    mkxp-z lowercases a requested name and applies `fontSub` ("from>to") once, but stores the `from` keys as written, so both
+    sides must be lowercase; `to` must be the family name stored inside a font file that sits in the game's Fonts/ folder."""
     notes: list[str] = []
     if not japanese_fonts() and not any(re.search(r"cjk|ipa|gothic|takao|han", k) for k in installed_fonts(extra_dirs)):
         notes.append("this computer has no Japanese font, so Japanese text (and mkxp-z's own error boxes) shows as squares: " + INSTALL_HINT)
     wanted = script_font_names(sources)
     names = list(dict.fromkeys(wanted + COMMON_NAMES))
-    own = game_font_files(base)
+    own_files = list(game_font_files(base).values())
+    own_families = {font_family(f) for f in own_files} | set(game_font_files(base))      # what the game's own Fonts/ already provides
     installed = installed_fonts(extra_dirs)
     fonts_dir = out / "Fonts"
-    subs = [s for s in cfg.get("fontSub", []) if isinstance(s, str)]
-    have_sub = {s.split(">")[0].strip().lower() for s in subs}
+    subs = [x for x in cfg.get("fontSub", []) if isinstance(x, str)]
+    have_sub = {x.split(">")[0].strip().lower() for x in subs}
     wanted_keys = {_norm(n) for n in wanted}
-    copied: set[Path] = set()
+    copied: dict[Path, str] = {}                     # stand-in file -> its family (lowercase), one copy each
 
-    def put(src: Path, name: str) -> bool:
-        dst = fonts_dir / (name + src.suffix.lower())
-        if dst.exists() or ci_child(fonts_dir, dst.name):
-            return True
+    def put(src: Path) -> str | None:
+        if src in copied:
+            return copied[src]
+        dst = fonts_dir / src.name
         try:
             fonts_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dst)
-            copied.add(dst)
-            return True
+            if not dst.exists():
+                shutil.copyfile(src, dst)
         except OSError as e:
             notes.append(f"could not write font {dst.name}: {e}")
-            return False
+            return None
+        copied[src] = font_family(src)
+        return copied[src]
 
     for name in names:
         key = _norm(name)
-        if key in own or key in installed:
+        low = name.strip().lower()
+        if low in have_sub or key in own_families or low in own_families:
             continue
+        exact = installed.get(key)
+        if exact is not None and key in wanted_keys:                                   # the very font is installed here: ship it
+            fam = put(exact)
+            if fam:
+                continue
         sub = pick_substitute(name, installed)
         if sub is None:
             if key in wanted_keys:
                 notes.append(f"no font file available to stand in for '{name}'")
             continue
-        if not put(sub, sub.stem):                      # one copy per stand-in, so the game runs where that font is not installed
-            continue
-        if key in wanted_keys:                          # fonts the scripts name get a file of their own name too
-            put(sub, name)
-        if name.lower() not in have_sub:
-            subs.append(f"{name}>{sub.stem}")
+        fam = put(sub)
+        if fam and fam != low:
+            subs.append(f"{low}>{fam}")
+            have_sub.add(low)
     if subs:
         cfg["fontSub"] = subs
     if copied:
-        notes.append(f"missing fonts get a stand-in: {len(copied)} font file(s) in Fonts/, {len(subs)} fontSub entries in mkxp.json")
+        notes.append(f"missing fonts get a stand-in: {len(copied)} font file(s) in Fonts/ and {len(subs)} fontSub entries in mkxp.json")
     return notes
 
 
