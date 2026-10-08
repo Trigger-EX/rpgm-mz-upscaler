@@ -166,6 +166,34 @@ def apply_hires(plan, out: Path) -> list[str]:
     return ["mkxp.json", "README-HUB.txt"] + bundled + (["Fonts"] if (out / "Fonts").is_dir() else [])
 
 
+def refresh_export(out: Path, mkxp_path: str = "") -> list[str]:
+    """Re-run the cheap steps of a hires export on a folder that is already upscaled (no images are touched): the mkxp.json
+    keys, Win32API preloads and the TRGSSX stand-in, the font stand-ins, the bundled mkxp-z player and README-HUB.txt.
+    Returns what was done plus the warnings found."""
+    from types import SimpleNamespace
+    from ..core.settings import Options
+    from ..detect import detect_engine
+    from .project import load_rgss_project
+    out = Path(out)
+    info = detect_engine(out)
+    if info is None or info.engine not in ("ACE", "VX", "XP"):
+        raise ValueError("not an exported VX / VX Ace / XP game folder (no Game.ini and Data/ found)")
+    if not (out / "mkxp.json").is_file() and not (out / "Hires").is_dir():
+        raise ValueError("this folder is not a hires export (no Hires/ folder or mkxp.json); upscale the game first")
+    project = load_rgss_project(out, out, info)
+    cfg = {}
+    try:
+        cfg = json.loads(strip_json_comments((out / "mkxp.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+    n = cfg.get("textureScalingFactor") or 2
+    have_player = (out / "Game").is_file()
+    opts = Options(mkxp_path=mkxp_path, bundle_player=not have_player or mkxpmod.locate(mkxp_path) is not None)
+    plan = SimpleNamespace(project=project, options=opts, warnings=[], scale=SimpleNamespace(n=n))
+    done = apply_hires(plan, out)
+    return [f"updated {', '.join(done)}"] + plan.warnings
+
+
 def render_script(width: int = 640, height: int = 480) -> str:
     tmpl = resources.files("rpgm_upscaler.rgss").joinpath("templates/HubResolution.rb").read_text(encoding="utf-8")
     return tmpl.replace("__WIDTH__", str(width)).replace("__HEIGHT__", str(height))

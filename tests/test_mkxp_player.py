@@ -133,3 +133,36 @@ def test_trgssx_games_get_a_version_stand_in(tmp_path):
     assert "TRGSSX" in rb and "DllGetVersion" in rb
     assert "scripts/preload/hub_trgssx.rb" in json.loads((out / "mkxp.json").read_text())["preloadScript"]
     assert any("TRGSSX.dll" in w for w in plan.warnings)
+
+
+def test_fix_export_repairs_an_old_export_without_touching_images(tmp_path, monkeypatch):
+    from rpgm_upscaler.rgss import fonts
+    fdir = tmp_path / "sysfonts"; fdir.mkdir()
+    (fdir / "IPAGothic.ttf").write_bytes(b"fake")
+    monkeypatch.setattr(fonts, "SYSTEM_DIRS", [str(fdir)])
+    monkeypatch.setattr(fonts, "_fc_list", lambda: {})
+    monkeypatch.setattr(fonts, "japanese_fonts", lambda: [])
+    import shutil
+    g = make_ace(tmp_path / "g", ace=True)
+    out = tmp_path / "out"
+    shutil.copytree(g, out)                                    # a real export holds the game's Data/ and Game.ini too
+    plan = build_plan(load_rgss_project(g), Options(), "hires")
+    patch.apply_hires(plan, out)
+    hero = out / "Hires" / "Graphics" / "Faces"; hero.mkdir(parents=True)
+    (hero / "keep.png").write_bytes(b"png")
+    # what the broken versions wrote: mixed-case keys, a file-name target, a stray italic font, no player
+    cfg = json.loads((out / "mkxp.json").read_text())
+    cfg["fontSub"] = ["UmePlus Gothic>ipag", "メイリオ>ipag", "my font>mine"]
+    cfg["preloadScript"] = []
+    (out / "mkxp.json").write_text(json.dumps(cfg))
+    (out / "Fonts").mkdir(exist_ok=True); (out / "Fonts" / "ipag.ttf").write_bytes(b"old")
+    player = fake_player(tmp_path / "player")
+    notes = patch.refresh_export(out, str(player))
+    new = json.loads((out / "mkxp.json").read_text())
+    assert "umeplus gothic>ipagothic" in new["fontSub"] and "UmePlus Gothic>ipag" not in new["fontSub"] and "メイリオ>ipag" not in new["fontSub"]
+    assert "my font>mine" not in new["fontSub"]                          # points at no font in Fonts/
+    assert "scripts/preload/win32_wrap.rb" in new["preloadScript"] and new["textureScalingFactor"] == 2.5
+    assert os.access(out / "Game", os.X_OK) and (hero / "keep.png").read_bytes() == b"png"
+    assert notes and notes[0].startswith("updated")
+    with pytest.raises(ValueError):
+        patch.refresh_export(tmp_path / "nothing")
