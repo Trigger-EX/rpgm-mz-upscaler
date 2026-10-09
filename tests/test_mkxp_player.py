@@ -237,3 +237,20 @@ def test_rtp_is_found_in_a_lutris_prefix_and_a_missing_rtp_is_reported(tmp_path,
     out = tmp_path / "out3"; out.mkdir()
     patch.apply_hires(plan, out)
     assert json.loads((out / "mkxp.json").read_text())["RTP"][0] == str(mine)
+
+
+def test_hires_config_avoids_mkxpz_native_blit_that_garbles_the_tile_atlas(tmp_path):
+    """mkxp-z's HAVE_NATIVE_BLIT (smoothScaling <= 1 and smoothScalingDown <= 1) fills the hires atlas from the low-res framebuffer:
+    the mangled map (black rows, wrong tiles) seen in a real VX game. Either value >= 2 selects the shader path."""
+    g = make_ace(tmp_path / "g", ace=False)
+    plan = build_plan(load_rgss_project(g), Options(), "hires")
+    out = tmp_path / "out"; out.mkdir()
+    patch.apply_hires(plan, out)
+    cfg = json.loads((out / "mkxp.json").read_text())
+    assert not (cfg["smoothScaling"] <= 1 and cfg["smoothScalingDown"] <= 1) and cfg["smoothScalingDown"] >= 2
+    # a user's earlier mkxp.json that forces the native path is corrected; a higher choice is kept
+    for old, want in ((0, 2), (1, 2), (3, 3)):
+        (g / "mkxp.json").write_text(json.dumps({"smoothScalingDown": old}))
+        o2 = tmp_path / f"o{old}"; o2.mkdir()
+        patch.apply_hires(build_plan(load_rgss_project(g), Options(), "hires"), o2)
+        assert json.loads((o2 / "mkxp.json").read_text())["smoothScalingDown"] == want

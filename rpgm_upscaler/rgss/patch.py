@@ -144,6 +144,13 @@ def apply_hires(plan, out: Path) -> list[str]:
         "textureScalingFactor": n, "framebufferScalingFactor": n, "atlasScalingFactor": n,
         "fixedAspectRatio": True, "winResizable": True, "smoothScaling": 1, "vsync": True,
     })
+    # mkxp-z builds the hires tile atlas with glBlitFramebuffer when smoothScaling and smoothScalingDown are both <= 1 (bilinear). That
+    # native path binds the LOW-res source framebuffer but scales the source rectangle to hires coordinates, so the atlas is filled with
+    # 1x tileset pixels at the wrong places: black rows, wrong tiles, tileset fragments on screen. Any value >= 2 on either key makes
+    # mkxp-z draw the blit through its shader path, which reads the hires texture. smoothScalingDown (bicubic) only changes how the
+    # 2.5x framebuffer is shrunk into a smaller window, so that is the key we raise; an existing higher value is kept.
+    old = cfg.get("smoothScalingDown")
+    cfg["smoothScalingDown"] = max(2, old) if isinstance(old, int) and not isinstance(old, bool) else 2
     sources = fontmod.script_sources(plan.project.base, plan.project.scripts_path)
     preload = [x for x in cfg.get("preloadScript", []) if isinstance(x, str)]
     for lib in ("ruby_classic_wrap", "mkxp_wrap", "win32_wrap"):       # Win32API and Ruby 1.8 stand-ins that mkxp-z ships but leaves off

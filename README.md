@@ -58,6 +58,10 @@ through the Windows registry, mkxp-z needs a path in `mkxp.json`. The hub looks 
 `~/Games/*`, Proton, Bottles, PlayOnLinux), `$RPGM_RTP`, `~/RTP`; if it finds none it warns, and you can point at it with *RTP folder* in
 the mkxp-z box (CLI: `--rtp DIR`, also for `fix-export`).
 
+**Mangled map (black rows, wrong tiles, tileset fragments on screen)?** That is an mkxp-z quirk: when `smoothScaling` and `smoothScalingDown` are both
+<= 1, it builds the hires tile atlas through `glBlitFramebuffer`, which reads the low-res source. Exports now set `smoothScalingDown` to 2 (an existing higher
+value is kept). Exports made by older versions: run `fix-export` on them, or add `"smoothScalingDown": 2` to their `mkxp.json`.
+
 **Already upscaled?** `rpgm-hub fix-export FOLDER` (or *Fix an existing export…* in the mkxp-z box) re-applies the fonts, the Win32API
 preloads, the TRGSSX stand-in and the mkxp-z player to a finished hires export, without redoing any image. Add `--source ORIGINAL_GAME`
 to also copy in files the export lacks (e.g. a loose `Audio/` folder that older versions dropped for archived games).
