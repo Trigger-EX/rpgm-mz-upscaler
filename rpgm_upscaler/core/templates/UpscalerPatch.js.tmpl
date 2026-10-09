@@ -305,6 +305,44 @@ if (src(Sprite_Actor, "setActorHome")) {
     console.info(TAG, "size locals rewritten:", rewritten);
 }
 
+// ---- bitmaps that plugins create at a literal size ---------------------------------------------
+// A plugin button or label often does `this.bitmap = new Bitmap(120, 40)`. That bitmap stays at the original size while the text
+// drawn into it is scaled, or the sprite is stretched afterwards, and the lettering turns soft. Plain numeric literals are
+// multiplied in a copy of the method (R(...) expressions, as the patched engine methods above use, are not literals and are
+// left alone, so nothing is scaled twice). A method the copy cannot run for keeps its original.
+{
+    const BITMAP = /\bnew\s+Bitmap\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/g;
+    let bitmaps = 0;
+    for (const key of Object.getOwnPropertyNames(globalThis)) {
+        if (!/^(Window|Scene|Sprite)_/.test(key)) continue;
+        let cls;
+        try { cls = globalThis[key]; } catch (e) { continue; }
+        if (typeof cls !== "function" || !cls.prototype) continue;
+        for (const m of Object.getOwnPropertyNames(cls.prototype)) {
+            if (m === "constructor") continue;
+            const d = Object.getOwnPropertyDescriptor(cls.prototype, m);
+            if (!d || typeof d.value !== "function") continue;
+            const text = String(d.value);
+            const hit = BITMAP.test(text);
+            BITMAP.lastIndex = 0;
+            if (!hit || /\bsuper\b/.test(text)) continue;
+            const t = text.replace(BITMAP, (all, w, h) => "new Bitmap(" + R(+w) + ", " + R(+h) + ")");
+            let copy;
+            try {
+                copy = text.startsWith("function") ? (0, eval)("(" + t + ")") : (0, eval)("({" + t + "})")[m];
+            } catch (e) { warn("could not rewrite bitmap size in " + key + "." + m + ": " + e); continue; }
+            if (typeof copy !== "function") continue;
+            const orig = d.value;
+            cls.prototype[m] = function () {
+                try { return copy.apply(this, arguments); }
+                catch (e) { if (e instanceof ReferenceError) return orig.apply(this, arguments); throw e; }
+            };
+            bitmaps++;
+        }
+    }
+    console.info(TAG, "literal bitmap sizes rewritten:", bitmaps);
+}
+
 console.info(TAG, "loaded, world scale x" + N, isMZ ? "(MZ)" : "(MV)");
 } catch (e) { console.error("[UpscalerPatch] aborted:", e); }
 })();
