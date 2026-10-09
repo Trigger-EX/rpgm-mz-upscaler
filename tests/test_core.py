@@ -600,3 +600,37 @@ def test_hub_entry_point_dispatches_cli_commands(tmp_path, monkeypatch, capsys):
     assert "MZ" in capsys.readouterr().out
     monkeypatch.setattr(sys, "argv", ["rpgm-hub", "--cli", "detect", str(g)])
     assert entry.main() == 0
+
+
+def test_engine_patch_scales_plugin_bitmaps_with_literal_sizes(tmp_path):
+    import shutil, subprocess
+    from importlib import resources
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    t = resources.files("rpgm_upscaler.core").joinpath("templates/UpscalerPatch.js.tmpl").read_text(encoding="utf-8")
+    assert "literal bitmap sizes rewritten" in t
+    cfg = '{"n": 2, "offset": [0, 0], "target": [1920, 1080], "ui": [960, 540], "texMult": 1}'
+    js = tmp_path / "patch.js"
+    js.write_text(t.replace("__CONFIG__", cfg).replace("__N_TEXT__", "2").replace("__TW__", "1").replace("__TH__", "1"), encoding="utf-8")
+    harness = tmp_path / "run.js"
+    harness.write_text("""
+globalThis.Utils = {RPGMAKER_NAME: "MZ"};
+class Bitmap { constructor(w, h) { this.w = w; this.h = h; } }
+globalThis.Bitmap = Bitmap;
+for (const n of ["Game_Map","Game_CharacterBase","Game_Vehicle","Game_Picture","Game_Enemy","Game_Screen","Sprite_Battler","Sprite_Actor",
+                 "Sprite_Balloon","Sprite_StateOverlay","Sprite_Weapon","Sprite_Animation","Scene_Title","Window_Base","Window_Selectable","Game_System",
+                 "Sprite_Timer","Sprite_Gauge","Sprite_Button","Scene_MenuBase","ImageManager","Spriteset_Base","Tilemap"])
+    globalThis[n] = function () {};
+function Sprite_Plugin() {}
+Sprite_Plugin.prototype.make = function () { return new Bitmap(120, 40); };
+Sprite_Plugin.prototype.keep = function () { return new Bitmap(this.w(), 40); };
+globalThis.Sprite_Plugin = Sprite_Plugin;
+require(process.argv[2]);
+const a = new Sprite_Plugin().make(), b = new Sprite_Plugin();
+b.w = () => 7;
+console.log(JSON.stringify([a.w, a.h, b.keep().w, b.keep().h]));
+""", encoding="utf-8")
+    r = subprocess.run([node, str(harness), str(js)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().splitlines()[-1] == "[240,80,7,40]"
