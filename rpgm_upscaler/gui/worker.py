@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from PySide6.QtCore import QThread, Signal
 
@@ -55,6 +56,8 @@ class RunWorker(QThread):
         super().__init__(parent)
         self.path, self.out, self.opts, self.mode = path, out, opts, mode
         self.runner: Runner | None = None
+        self._last_progress = 0.0
+        self._log_count = 0
         self._cancelled = False          # a cancel that arrives while the plan is still being built must not be lost
         self._cancel_event = threading.Event()      # also stops the unpacking of an encrypted archive
 
@@ -64,13 +67,34 @@ class RunWorker(QThread):
         if self.runner:
             self.runner.cancel()
 
+    @staticmethod
+    def _clean(s: str) -> str:
+        """File names from old (e.g. Shift-JIS) archives can carry lone surrogates, which Qt cannot convert."""
+        return str(s).encode("utf-8", "replace").decode("utf-8", "replace")
+
+    def _emit_progress(self, done: int, total: int, name: str) -> None:
+        """A fast engine (nearest) finishes thousands of images a second; flooding the GUI thread's event queue with
+        one signal each can take the whole app down. At most ~20 updates a second, the final one always goes through."""
+        now = time.monotonic()
+        if done < total and now - self._last_progress < 0.05:
+            return
+        self._last_progress = now
+        self.progress.emit(int(done), int(total), self._clean(name))
+
+    def _emit_log(self, level: str, msg: str) -> None:
+        self.log.emit(self._clean(level), self._clean(msg))
+        if level == "info":                  # one log line per image: give the GUI thread room to drain them
+            self._log_count += 1
+            if self._log_count % 50 == 0:
+                self.msleep(5)
+
     def run(self) -> None:
         prepared = None
         try:
             plan, prepared = _plan_for(self.path, self.opts, self.mode, self._cancel_event)
             for w in plan.warnings:
                 self.log.emit("warning", w)
-            self.runner = Runner(plan, self.out, self.progress.emit, self.log.emit)
+            self.runner = Runner(plan, self.out, self._emit_progress, self._emit_log)
             if self._cancelled:
                 self.runner.cancel()
             self.finished_run.emit(self.runner.run())
