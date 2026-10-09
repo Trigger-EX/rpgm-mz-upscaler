@@ -334,7 +334,9 @@ def test_upscale_refuses_without_mkxp_unless_overridden(hub, tmp_path, monkeypat
     up.src_edit.setText(str(g)); up.out_edit.setText(str(tmp_path / "out"))
     up.vx_mode.setCurrentText("hires")
     up.update_mkxp_status()
-    assert "NOT installed" in up.mkxp_status.text() and up.mkxp_install_btn.text() == "Install mkxp-z"
+    assert "NOT installed" in up.mkxp_status.text() and "Setup page" in up.mkxp_status.text()
+    hub.setup.refresh()
+    assert hub.setup.mkxp_install_btn.text() == "Install mkxp-z" and "NOT installed" in hub.setup.mkxp_label.text()
     up.start()
     assert up.worker is None and shown and "mkxp-z player is not installed" in shown[0] and "Install mkxp-z" in shown[0]
     up.mkxp_skip.setChecked(True)
@@ -343,3 +345,20 @@ def test_upscale_refuses_without_mkxp_unless_overridden(hub, tmp_path, monkeypat
     assert not any("mkxp-z player is not installed" in m for m in shown)         # the override lets it go on
     if up.worker is not None:
         up.worker.cancel(); up.worker.wait(30000)
+
+
+def test_setup_page_remembers_the_mkxp_folder_and_rtp(hub, tmp_path, monkeypatch):
+    from rpgm_upscaler.rgss import mkxp
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data")); monkeypatch.delenv("RPGM_MKXPZ_DIR", raising=False)
+    player = tmp_path / "myplayer"; player.mkdir()
+    (player / "mkxp-z.x86_64").write_bytes(b"x" * 10)
+    changed = []
+    hub.ctx.setup_changed.connect(lambda: changed.append(1))
+    mkxp.save_prefs(path=str(player))
+    hub.setup._mkxp_changed()
+    assert "installed" in hub.setup.mkxp_label.text() and str(player) in hub.setup.mkxp_label.text() and changed
+    assert "is installed" in hub.upscale.mkxp_status.text()                       # the Upscale page follows the Setup page
+    hub.setup.rtp_edit.setText(str(tmp_path / "rtp")); hub.setup.rtp_edit.editingFinished.emit()
+    assert mkxp.prefs() == {"path": str(player), "rtp": str(tmp_path / "rtp")}
+    opts = hub.upscale.options()
+    assert opts.mkxp_path == str(player) and opts.rtp_path == str(tmp_path / "rtp")

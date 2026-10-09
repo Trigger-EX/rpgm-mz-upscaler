@@ -44,6 +44,19 @@ class MkxpError(Exception):
     pass
 
 
+def prefs() -> dict:
+    """What the Setup page remembers: {"path": folder that holds mkxp-z, "rtp": RTP folder}."""
+    from ..core.settings import load_settings
+    d = load_settings().get("mkxp", {})
+    return {"path": str(d.get("path", "")), "rtp": str(d.get("rtp", ""))} if isinstance(d, dict) else {"path": "", "rtp": ""}
+
+
+def save_prefs(path: str | None = None, rtp: str | None = None) -> None:
+    from ..core.settings import save_settings
+    cur = prefs()
+    save_settings({"mkxp": {"path": cur["path"] if path is None else path, "rtp": cur["rtp"] if rtp is None else rtp}})
+
+
 def cache_dir() -> Path:
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "rpgm-upscaler" / "mkxp-z"
 

@@ -135,6 +135,7 @@ class HubWindow(QMainWindow):
         self.translation = TranslateTab(self.ctx)
         self.setup = SetupPage(self.ctx)
         self.ctx.setup_changed.connect(self.translation.refresh)
+        self.ctx.setup_changed.connect(self.upscale.update_mkxp_status)
         self.ctx.setup_changed.connect(self.game_translate.refresh_model)
         self.log_box = QPlainTextEdit(); self.log_box.setReadOnly(True); self.log_box.setMaximumBlockCount(5000)
         for w in (self.project_page, self.upscale, self.saves, self.game_translate, self.translation, self.setup, self.log_box):

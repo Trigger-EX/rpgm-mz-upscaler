@@ -19,7 +19,7 @@ from ..core.project import ProjectError
 from ..detect import detect_engine
 from ..core.settings import Options, load_settings, save_settings
 from ..rgss import mkxp
-from .worker import MkxpInstallWorker, PlanWorker, PreviewWorker, RunWorker
+from .worker import PlanWorker, PreviewWorker, RunWorker
 
 SCALES = ["fit", "1.5", "2", "2.5", "3", "4"]
 MAX_LOG_LINES = 5000
@@ -185,79 +185,32 @@ class UpscaleTab(QWidget):
         self._locked = [self.src_edit, self.out_edit, b1, b2, self.analyze_btn, box, self.table, self.mkxp_box]
 
     def _build_mkxp_box(self, v: QVBoxLayout) -> None:
+        """Per-run choices for VX / Ace / XP hires exports. Installing the player and choosing the RTP happen on the Setup page."""
         self.mkxp_box = QGroupBox("mkxp-z player (VX / VX Ace / XP, hires mode)")
         g = QGridLayout(self.mkxp_box)
         self.mkxp_status = QLabel(); self.mkxp_status.setWordWrap(True); self.mkxp_status.setTextFormat(Qt.PlainText)
-        self.mkxp_install_btn = QPushButton("Install mkxp-z")
-        self.mkxp_install_btn.setToolTip("Downloads the newest Linux build once (about 20 MB, from nightly.link, a mirror of mkxp-z's own "
-                                         "automatic builds). Every exported game then carries it and starts with ./Game.")
-        self.mkxp_use_btn = QPushButton("Use existing…")
-        self.mkxp_use_btn.setToolTip("Pick a folder that already holds mkxp-z (the program, scripts/ and stdlib/).")
-        self.mkxp_page_btn = QPushButton("Open download page")
         self.mkxp_fix_btn = QPushButton("Fix an existing export…")
         self.mkxp_fix_btn.setToolTip("Re-applies the fonts, Win32API preloads and the mkxp-z player to a hires export that is already upscaled, and restores files "
-                                     "the original (the Game folder above) has but the export lacks, such as Audio/. "
-                                     "No images are redone.")
-        self.mkxp_help = QLabel("mkxp-z has no releases, only automatic builds. Alternatives: use the button above, pick a build yourself on the "
-                                "download page (the Linux x86_64 one), or build it from github.com/mkxp-z/mkxp-z. The player is copied into "
-                                "each export, so the exported folder starts with ./Game and nothing else to install.")
-        self.mkxp_help.setWordWrap(True)
+                                     "the original (the Game folder above) has but the export lacks, such as Audio/. No images are redone.")
         self.mkxp_bundle = QCheckBox("Include the player in the export"); self.mkxp_bundle.setChecked(True)
         self.mkxp_skip = QCheckBox("Upscale without mkxp-z (I will add the player myself)")
-        self.rtp_edit = QLineEdit(); self.rtp_edit.setPlaceholderText("RTP folder (optional: holds Graphics/ and Audio/; searched for in Wine/Lutris prefixes if empty)")
-        self.rtp_browse = QPushButton("Browse…")
-        self.mkxp_progress = QProgressBar(); self.mkxp_progress.setVisible(False)
-        self.mkxp_path = ""
-        g.addWidget(self.mkxp_status, 0, 0, 1, 4)
-        g.addWidget(self.mkxp_install_btn, 1, 0); g.addWidget(self.mkxp_use_btn, 1, 1); g.addWidget(self.mkxp_page_btn, 1, 2)
-        g.addWidget(self.mkxp_progress, 1, 3)
-        g.addWidget(self.mkxp_help, 2, 0, 1, 4)
-        g.addWidget(self.mkxp_bundle, 3, 0, 1, 2); g.addWidget(self.mkxp_skip, 3, 2, 1, 2)
-        g.addWidget(self.mkxp_fix_btn, 4, 0, 1, 2)
-        g.addWidget(QLabel("RTP folder:"), 5, 0); g.addWidget(self.rtp_edit, 5, 1, 1, 2); g.addWidget(self.rtp_browse, 5, 3)
+        g.addWidget(self.mkxp_status, 0, 0, 1, 3)
+        g.addWidget(self.mkxp_bundle, 1, 0); g.addWidget(self.mkxp_skip, 1, 1); g.addWidget(self.mkxp_fix_btn, 1, 2)
         self.mkxp_box.setVisible(False)                 # shown once a VX / Ace / XP game is analysed
         v.addWidget(self.mkxp_box)
-        self._mkxp_worker = None
-        self.mkxp_install_btn.clicked.connect(self.install_mkxp)
-        self.mkxp_use_btn.clicked.connect(self._use_existing_mkxp)
-        self.mkxp_page_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(mkxp.PAGE)))
         self.mkxp_fix_btn.clicked.connect(self._fix_export)
-        self.rtp_browse.clicked.connect(lambda: self._browse(self.rtp_edit))
         self.mkxp_bundle.toggled.connect(lambda _on: self.update_mkxp_status())
         self.mkxp_skip.toggled.connect(lambda _on: self.update_mkxp_status())
 
     def update_mkxp_status(self) -> None:
-        where = mkxp.locate(self.mkxp_path)
+        where = mkxp.locate(mkxp.prefs()["path"])
         if where is not None:
             ver = mkxp.version(where)
-            self.mkxp_status.setText(f"mkxp-z is installed: {where}" + (f" ({ver})" if ver else ""))
-            self.mkxp_install_btn.setText("Update mkxp-z")
+            self.mkxp_status.setText(f"mkxp-z is installed ({where}" + (f", {ver}" if ver else "") + "). Install, update or change it on the Setup page.")
         else:
-            self.mkxp_status.setText("mkxp-z is NOT installed. Hires exports of VX / VX Ace / XP games need it: click 'Install mkxp-z'."
-                                     + ("" if mkxp.supported() else " (No prebuilt Linux build for this system: use an existing folder or build it.)"))
-            self.mkxp_install_btn.setText("Install mkxp-z")
-        self.mkxp_install_btn.setEnabled(mkxp.supported() and self._mkxp_worker is None)
+            self.mkxp_status.setText("mkxp-z is NOT installed, so upscaling a VX / VX Ace / XP game in hires mode is refused. Install it on the Setup page "
+                                     "(or tick 'Upscale without mkxp-z' to go on anyway).")
         self.mkxp_skip.setEnabled(self.mkxp_bundle.isChecked())
-
-    def install_mkxp(self) -> None:
-        if self._mkxp_worker is not None:
-            return
-        self.mkxp_install_btn.setEnabled(False)
-        self.mkxp_progress.setVisible(True); self.mkxp_progress.setRange(0, 0)
-        self._append_log("info", "downloading the mkxp-z player…")
-        w = self._mkxp_worker = MkxpInstallWorker(self)
-        w.progress.connect(lambda done, total: (self.mkxp_progress.setRange(0, max(total, 0)), self.mkxp_progress.setValue(done)))
-        w.finished_run.connect(lambda where: self._append_log("info", f"mkxp-z installed in {where}"))
-        w.failed.connect(lambda msg: (self._append_log("error", f"mkxp-z: {msg}"), QMessageBox.warning(self, "mkxp-z", msg + "\n\n" + mkxp.HELP)))
-        w.finished.connect(self._mkxp_finished)
-        w.start()
-
-    def _mkxp_finished(self) -> None:
-        w, self._mkxp_worker = self._mkxp_worker, None
-        if w is not None:
-            w.deleteLater()
-        self.mkxp_progress.setVisible(False)
-        self.update_mkxp_status()
 
     def _fix_export(self) -> None:
         from ..rgss import patch
@@ -266,8 +219,8 @@ class UpscaleTab(QWidget):
             return
         try:
             src = self.src_edit.text().strip()
-            lines = patch.refresh_export(Path(d), self.mkxp_path, src if src and Path(src).is_dir() and Path(src) != Path(d) else None,
-                                         self.rtp_edit.text().strip())
+            lines = patch.refresh_export(Path(d), mkxp.prefs()["path"], src if src and Path(src).is_dir() and Path(src) != Path(d) else None,
+                                         mkxp.prefs()["rtp"])
         except (ValueError, OSError) as e:
             self._append_log("error", f"fix export: {e}")
             QMessageBox.warning(self, "Fix an existing export", str(e))
@@ -275,16 +228,6 @@ class UpscaleTab(QWidget):
         for i, line in enumerate(lines):
             self._append_log("info" if i == 0 else "warning", line)
         QMessageBox.information(self, "Fix an existing export", "\n".join(lines))
-
-    def _use_existing_mkxp(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "Folder that holds mkxp-z (the program, scripts/ and stdlib/)", self.mkxp_path or str(Path.home()))
-        if not d:
-            return
-        if mkxp.player_exe(Path(d)) is None:
-            QMessageBox.warning(self, "mkxp-z", "No mkxp-z program (mkxp-z, mkxp-z.x86_64 ...) in that folder.")
-            return
-        self.mkxp_path = d
-        self.update_mkxp_status()
 
     # ---- options <-> widgets ------------------------------------------------------------------
     def options(self) -> Options:
@@ -303,7 +246,7 @@ class UpscaleTab(QWidget):
                        patch=self.patch.isChecked(), reencrypt=self.reenc.isChecked(),
                        scale_windowskin=self.winskin.isChecked(), ui_fill=self.ui_fill.isChecked(),
                        anchor=self.anchor.currentText(), workers=self.workers.value(), resume=self.resume.isChecked(),
-                       bundle_player=self.mkxp_bundle.isChecked(), allow_no_player=self.mkxp_skip.isChecked(), mkxp_path=self.mkxp_path, rtp_path=self.rtp_edit.text().strip())
+                       bundle_player=self.mkxp_bundle.isChecked(), allow_no_player=self.mkxp_skip.isChecked(), mkxp_path=mkxp.prefs()["path"], rtp_path=mkxp.prefs()["rtp"])
 
     def _load_settings(self) -> None:
         s = load_settings()
@@ -319,7 +262,7 @@ class UpscaleTab(QWidget):
         self.winskin.setChecked(o.scale_windowskin); self.ui_fill.setChecked(o.ui_fill)
         self.anchor.setCurrentText(o.anchor); self.workers.setValue(o.workers); self.resume.setChecked(o.resume)
         self._saved_resamplers, self._saved_skip = o.resamplers, o.skip
-        self.mkxp_bundle.setChecked(o.bundle_player); self.mkxp_skip.setChecked(o.allow_no_player); self.mkxp_path = o.mkxp_path; self.rtp_edit.setText(o.rtp_path)
+        self.mkxp_bundle.setChecked(o.bundle_player); self.mkxp_skip.setChecked(o.allow_no_player)
         self.update_mkxp_status()
         self.update_engine_status()
 

@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar,
                                QPushButton, QVBoxLayout, QWidget)
 
+from ..rgss import mkxp
 from ..translate import pyenv
-from .worker import DepsWorker, FetchWorker, ModelWorker
+from .worker import DepsWorker, FetchWorker, MkxpInstallWorker, ModelWorker
 
 
 class SetupPage(QWidget):
@@ -18,6 +20,7 @@ class SetupPage(QWidget):
         self._model_worker: ModelWorker | None = None
         self._deps_worker: DepsWorker | None = None
         self._fetch_worker: FetchWorker | None = None
+        self._mkxp_worker: MkxpInstallWorker | None = None
         self._entries: dict[str, dict] = {}         # model key -> the link a Fetch found
         v = QVBoxLayout(self)
         v.addWidget(QLabel("<h2>Setup</h2>Optional components. Nothing here is needed for upscaling with the built-in engines."))
@@ -69,6 +72,35 @@ class SetupPage(QWidget):
         ml.addWidget(self.model_label)
         v.addWidget(md)
 
+        mk = QGroupBox("mkxp-z player (VX / VX Ace / XP, hires exports)")
+        kl = QVBoxLayout(mk)
+        krow = QHBoxLayout()
+        self.mkxp_install_btn = QPushButton("Install mkxp-z")
+        self.mkxp_install_btn.setToolTip("Downloads the newest Linux build once (about 20 MB, from nightly.link, a mirror of mkxp-z's own "
+                                         "automatic builds). Every exported game then carries it and starts with ./Game.")
+        self.mkxp_use_btn = QPushButton("Use existing…")
+        self.mkxp_use_btn.setToolTip("Pick a folder that already holds mkxp-z (the program, scripts/ and stdlib/).")
+        self.mkxp_clear_btn = QPushButton("Use downloaded copy")
+        self.mkxp_page_btn = QPushButton("Open download page")
+        for w in (self.mkxp_install_btn, self.mkxp_use_btn, self.mkxp_clear_btn, self.mkxp_page_btn):
+            krow.addWidget(w)
+        krow.addStretch(1)
+        kl.addLayout(krow)
+        self.mkxp_label = QLabel(); self.mkxp_label.setWordWrap(True); self.mkxp_label.setTextFormat(Qt.PlainText)
+        kl.addWidget(self.mkxp_label)
+        kl.addWidget(QLabel("mkxp-z has no releases, only automatic builds. Alternatives to the button: pick a build yourself on the download page "
+                            "(the Linux x86_64 one) and use 'Use existing…', or build it from github.com/mkxp-z/mkxp-z."))
+        kl.itemAt(kl.count() - 1).widget().setWordWrap(True)
+        rrow = QHBoxLayout()
+        self.rtp_edit = QLineEdit(); self.rtp_edit.setAcceptDrops(False)
+        self.rtp_edit.setPlaceholderText("RTP folder (optional): holds Graphics/ and Audio/. Searched for in Wine/Lutris prefixes if empty.")
+        self.rtp_edit.setToolTip("VX / Ace / XP games borrow shared assets (such as Graphics/Characters/Vehicle) from the RTP, which is not in the "
+                                 "game folder. Install the RTP under Wine, or unpack it, and pick its folder here if the hub does not find it.")
+        self.rtp_browse = QPushButton("Browse…")
+        rrow.addWidget(QLabel("RTP folder:")); rrow.addWidget(self.rtp_edit, 1); rrow.addWidget(self.rtp_browse)
+        kl.addLayout(rrow)
+        v.addWidget(mk)
+
         crow = QHBoxLayout()
         self.cancel_btn = QPushButton("Cancel"); self.cancel_btn.setEnabled(False)
         self.progress = QProgressBar(); self.progress.setVisible(False)
@@ -89,6 +121,13 @@ class SetupPage(QWidget):
         self.install_btn.clicked.connect(lambda: self._start_model(None))
         self.import_btn.clicked.connect(self._import_dialog)
         self.cancel_btn.clicked.connect(self._cancel)
+        self.mkxp_install_btn.clicked.connect(self._start_mkxp)
+        self.mkxp_use_btn.clicked.connect(self._use_existing_mkxp)
+        self.mkxp_clear_btn.clicked.connect(lambda: (mkxp.save_prefs(path=""), self._mkxp_changed()))
+        self.mkxp_page_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(mkxp.PAGE)))
+        self.rtp_browse.clicked.connect(self._browse_rtp)
+        self.rtp_edit.editingFinished.connect(lambda: self._save_rtp(self.rtp_edit.text().strip()))
+        self.rtp_edit.setText(mkxp.prefs()["rtp"])
         c = pyenv.custom_env()
         self.env_edit.setText(str(c) if c else "")
         self.refresh()
@@ -112,7 +151,60 @@ class SetupPage(QWidget):
         self.refresh()
         self.ctx.setup_changed.emit()
 
+    # ---- mkxp-z --------------------------------------------------------------------------------------
+    def _mkxp_changed(self) -> None:
+        self.refresh()
+        self.ctx.setup_changed.emit()
+
+    def _start_mkxp(self) -> None:
+        if self._mkxp_worker is not None and self._mkxp_worker.isRunning():
+            return
+        self.ctx.log.emit("info", "downloading the mkxp-z player…")
+        w = self._mkxp_worker = MkxpInstallWorker(self)
+        w.progress.connect(lambda done, total: (self.progress.setRange(0, max(total, 0)), self.progress.setValue(done)))
+        w.finished_run.connect(lambda where: (self.ctx.log.emit("info", f"mkxp-z installed in {where}"), self._mkxp_changed()))
+        w.failed.connect(self._mkxp_failed)
+        w.finished.connect(lambda: (self._busy(False), self.refresh()))
+        self._busy(True)
+        w.start()
+
+    def _mkxp_failed(self, msg: str) -> None:
+        self.ctx.log.emit("error", f"mkxp-z: {msg}")
+        QMessageBox.warning(self, "mkxp-z", msg + "\n\n" + mkxp.HELP)
+
+    def _use_existing_mkxp(self) -> None:
+        d = QFileDialog.getExistingDirectory(self, "Folder that holds mkxp-z (the program, scripts/ and stdlib/)",
+                                             mkxp.prefs()["path"] or str(Path.home()))
+        if not d:
+            return
+        if mkxp.player_exe(Path(d)) is None:
+            QMessageBox.warning(self, "mkxp-z", "No mkxp-z program (mkxp-z, mkxp-z.x86_64 ...) in that folder.")
+            return
+        mkxp.save_prefs(path=d)
+        self._mkxp_changed()
+
+    def _browse_rtp(self) -> None:
+        d = QFileDialog.getExistingDirectory(self, "The RTP folder (holds Graphics/ and Audio/)", self.rtp_edit.text() or str(Path.home()))
+        if d:
+            self.rtp_edit.setText(d)
+            self._save_rtp(d)
+
+    def _save_rtp(self, text: str) -> None:
+        if text != mkxp.prefs()["rtp"]:
+            mkxp.save_prefs(rtp=text)
+            self.ctx.setup_changed.emit()
+
     def refresh(self) -> None:
+        where = mkxp.locate(mkxp.prefs()["path"])
+        if where is not None:
+            ver = mkxp.version(where)
+            self.mkxp_label.setText(f"mkxp-z is installed: {where}" + (f" ({ver})" if ver else ""))
+        else:
+            self.mkxp_label.setText("mkxp-z is NOT installed. Hires exports of VX / VX Ace / XP games need it: click 'Install mkxp-z'."
+                                    + ("" if mkxp.supported() else " (No prebuilt Linux build for this system: use an existing folder or build it.)"))
+        self.mkxp_install_btn.setText("Update mkxp-z" if where is not None else "Install mkxp-z")
+        self.mkxp_install_btn.setEnabled(mkxp.supported() and not self._running())
+        self.mkxp_clear_btn.setEnabled(bool(mkxp.prefs()["path"]))
         self.env_label.setText("Packages are installed into and loaded from: " + pyenv.describe_target())
         try:
             st = self.ctx.translator.status()
@@ -135,19 +227,20 @@ class SetupPage(QWidget):
 
     # ---- workers ---------------------------------------------------------------------------------
     def _running(self) -> bool:
-        return any(w is not None and w.isRunning() for w in (self._deps_worker, self._model_worker))
+        return any(w is not None and w.isRunning() for w in (self._deps_worker, self._model_worker, self._mkxp_worker))
 
     def _busy(self, busy: bool) -> None:
         for w in (self.deps_btn, self.ocr_btn, self.install_btn, self.import_btn, self.fetch_btn, self.model_box,
-                  self.env_edit, self.env_browse, self.env_default):
+                  self.env_edit, self.env_browse, self.env_default, self.mkxp_install_btn, self.mkxp_use_btn, self.mkxp_clear_btn):
             w.setEnabled(not busy)
         self.cancel_btn.setEnabled(busy and (self._deps_worker is not None and self._deps_worker.isRunning() or
+                                             self._mkxp_worker is not None and self._mkxp_worker.isRunning() or
                                              (self._model_worker is not None and self._model_worker.source is None)))
         self.progress.setVisible(busy)
         self.progress.setRange(0, 0 if busy else 1)
 
     def _cancel(self) -> None:
-        for w in (self._deps_worker, self._model_worker):
+        for w in (self._deps_worker, self._model_worker, self._mkxp_worker):
             if w is not None and w.isRunning():
                 w.cancel()
 
@@ -235,9 +328,9 @@ class SetupPage(QWidget):
         QMessageBox.warning(self, "Translation model", msg)
 
     def shutdown(self) -> bool:
-        for w in (self._model_worker, self._deps_worker, self._fetch_worker):
+        for w in (self._model_worker, self._deps_worker, self._fetch_worker, self._mkxp_worker):
             if w is not None and w.isRunning():
-                if isinstance(w, (ModelWorker, DepsWorker)):
+                if isinstance(w, (ModelWorker, DepsWorker, MkxpInstallWorker)):
                     w.cancel()
                 if not w.wait(20000):                     # never destroy a running QThread: refuse to close instead
                     return False
