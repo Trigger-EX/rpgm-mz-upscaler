@@ -321,6 +321,50 @@ def test_tex_multiplier_and_lib_patch():
     assert patcher.patch_tilemap_lib(src, 2)[0] == out    # derived from the original: deterministic
 
 
+@pytest.mark.parametrize("scale", ["1.625", "2.75", "4"])
+def test_mz_tilemap_rewrite_scales_each_literal_once(tmp_path, scale):
+    """At x2 a chained replace turned the 1024px sheet slots into 4096 (1024 -> 2048 -> 4096), as big as the whole texture:
+    every sheet but the first of each texture failed to upload and the map drew black with stray strips."""
+    node = shutil.which("node") or "/opt/node22/bin/node"
+    if not (shutil.which("node") or Path(node).exists()):
+        pytest.skip("needs node")
+    g = make_game(tmp_path / "g", "MZ")
+    plan = build_plan(load_project(g), Options(workers=1, movies=False, scale=scale))
+    k = patcher.tex_multiplier(plan.scale.n, plan.tileset_side)
+    (tmp_path / "plugin.js").write_text(patcher.render_plugin(plan, "lanczos"))
+    (tmp_path / "run.js").write_text("""
+const vm = require("vm"), fs = require("fs");
+const errors = [];
+const ctx = { console: { error: (...a) => errors.push(a.join(" ")), warn: (...a) => errors.push(a.join(" ")), info() {}, log() {} },
+              Utils: { RPGMAKER_NAME: "MZ" } };
+ctx.window = ctx; ctx.globalThis = ctx;
+const T = function () {}; T.Renderer = function () {}; T.Layer = function () {};
+// the shapes of the MZ core methods (rmmz_core.js Tilemap.Renderer / Tilemap.Layer)
+T.Renderer.prototype.initialize = eval("(function() {\\n    this.clear = 1024 * 1024 * 4;\\n})");
+T.Renderer.prototype._createInternalTextures = eval("(function() {\\n    return [2048, 2048];\\n})");
+T.Renderer.prototype._createShader = eval("(function() {\\n    return 'texture2D(uSampler0, textureCoord / 2048.0);';\\n})");
+T.Renderer.prototype.updateTextures = eval("(function(i) {\\n    return [1024 * (i % 2), 1024 * ((i >> 1) % 2)];\\n})");
+T.Layer.prototype._updateVertexBuffer = eval("(function(s) {\\n    return [1024 * (s & 1), 1024 * ((s >> 1) & 1)];\\n})");
+ctx.Tilemap = T;
+const stubs = {};
+const scope = new Proxy(ctx, { has: () => true, get: (t, k) => typeof k === "symbol" ? undefined : k in t ? t[k] : k in globalThis ? globalThis[k] : (stubs[k] ||= class {}) });
+vm.createContext(ctx);
+ctx.eval = (c) => vm.runInContext(c, ctx);
+vm.runInContext("with (scope) {" + fs.readFileSync(process.argv[2], "utf8") + "}", Object.assign(ctx, { scope }));
+const r = new T.Renderer();
+r.initialize();
+console.log(JSON.stringify({ errors: errors.filter((e) => /tilemap/.test(e)), clear: r.clear, tex: r._createInternalTextures(),
+    shader: r._createShader(), upload: r.updateTextures(3), vertex: new T.Layer()._updateVertexBuffer(3) }));
+""")
+    r = subprocess.run([node, str(tmp_path / "run.js"), str(tmp_path / "plugin.js")], capture_output=True, text=True)
+    res = json.loads(r.stdout)
+    assert k >= 2
+    assert not res["errors"], res["errors"]
+    slot, side = 1024 * k, 2048 * k
+    assert res["tex"] == [side, side] and res["shader"] == f"texture2D(uSampler0, textureCoord / {side}.0);"
+    assert res["upload"] == [slot, slot] and res["vertex"] == [slot, slot] and res["clear"] == slot * slot * 4
+
+
 def test_mv_tilemap_lib_patched_and_resume_does_not_compound(tmp_path):
     g = make_game(tmp_path / "g", "MV")
     out = tmp_path / "out"
