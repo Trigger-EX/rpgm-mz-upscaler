@@ -75,7 +75,9 @@ if (isMZ && CFG.texMult > 1 && typeof Tilemap !== "undefined") { // MV: js/libs/
                 const s = String(d.value);
                 if (!/\b(1024|2048)\b/.test(s)) continue;
                 try {
-                    const t = s.replace(/\b1024\b/g, String(1024 * CFG.texMult)).replace(/\b2048\b/g, String(2048 * CFG.texMult));
+                    // One pass: chained replaces would turn 1024 into 2048 and then 2048 again into 4096 at x2, making every sheet
+                    // slot as big as the whole texture (sheets past the first of each texture fail to upload and draw black).
+                    const t = s.replace(/\b(1024|2048)\b/g, (m) => String(+m * CFG.texMult));
                     const f = s.startsWith("function") || s.startsWith("class") ? (0, eval)("(" + t + ")") : (0, eval)("({" + t + "})")[key];
                     target[key] = f; patched++;
                 } catch (e) { warn("tilemap rewrite failed for " + key + ": " + e); }
